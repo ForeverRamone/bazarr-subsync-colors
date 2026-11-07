@@ -11,6 +11,7 @@ import shutil
 import statistics
 import subprocess
 import tempfile
+import threading
 import time
 
 log = logging.getLogger("doctor.verify")
@@ -93,13 +94,34 @@ def measure_shift(srt_before, srt_after, split_gap=1.0):
 # ---------------------------------------------------------------------------
 # Programas externos
 # ---------------------------------------------------------------------------
+CANCEL = threading.Event()  # "Detener" desde la web
+
+
+class Cancelled(Exception):
+    pass
+
+
 def _run(cmd, timeout, env=None):
+    """Ejecuta un programa externo; se puede cortar con CANCEL."""
     cmd = [shutil.which(cmd[0]) or cmd[0], *cmd[1:]]
     t0 = time.monotonic()
-    proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout, env=env)
-    if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
-        raise RuntimeError(f"{os.path.basename(cmd[0])} terminó con código {proc.returncode}: {' | '.join(tail)}")
+    with tempfile.TemporaryFile() as out:
+        proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, env=env)
+        while True:
+            try:
+                proc.wait(timeout=1)
+                break
+            except subprocess.TimeoutExpired:
+                if CANCEL.is_set() or time.monotonic() - t0 > timeout:
+                    proc.kill()
+                    proc.wait()
+                    if CANCEL.is_set():
+                        raise Cancelled()
+                    raise RuntimeError(f"{os.path.basename(cmd[0])} tardó más de {timeout} s")
+        if proc.returncode != 0:
+            out.seek(0)
+            tail = out.read().decode("utf-8", "replace").strip().splitlines()[-5:]
+            raise RuntimeError(f"{os.path.basename(cmd[0])} terminó con código {proc.returncode}: {' | '.join(tail)}")
     return time.monotonic() - t0
 
 
@@ -177,21 +199,32 @@ def verify(cfg, video_path, sub_path, audio_index=0):
         sub_copy = os.path.join(tmp, "in.srt")
         shutil.copyfile(sub_path, sub_copy)
         wav = os.path.join(tmp, "audio.wav")
+        log.info("  Extrayendo audio de %s…", os.path.basename(video_path))
         try:
             result["timings"]["audio"] = round(extract_audio(cfg, video_path, wav, audio_index), 1)
+        except Cancelled:
+            raise
         except Exception as e:  # noqa: BLE001
             result["error"] = f"Extrayendo audio: {e}"
+            log.warning("  No se pudo extraer el audio: %s", e)
             return result
+        log.info("  Audio listo en %.0f s", result["timings"]["audio"])
 
         errors = []
         for name, runner in (("ffsubsync", run_ffsubsync), ("alass", run_alass)):
             out = os.path.join(tmp, f"{name}.srt")
+            log.info("  Ejecutando %s…", name)
             try:
                 result["timings"][name] = round(runner(cfg, wav, sub_copy, out), 1)
                 result[name] = measure_shift(sub_copy, out)
+                m = result[name]
+                log.info("  %s lo movería %+.2f s (%d tramo%s) en %.0f s", name, m["median"], m["segments"],
+                         "" if m["segments"] == 1 else "s", result["timings"][name])
+            except Cancelled:
+                raise
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{name}: {e}")
-                log.warning("%s falló con %s: %s", name, sub_path, e)
+                log.warning("  %s falló: %s", name, e)
 
     result["verdict"] = decide(result["ffsubsync"], result["alass"], cfg)
     if errors:

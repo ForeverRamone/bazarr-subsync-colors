@@ -20,6 +20,14 @@ Para cada subtítulo amarillo o rojo (offset de Bazarr > 1 s), y para unos cuant
 
 Cada comprobación tarda unos minutos por película (lo que más tarda es leer el audio). Trabaja de una en una y, si quieres, solo de noche.
 
+## Uso desde la web
+
+- **Comprobar ahora** (en cada fila): la comprueba en cuanto termine lo que esté en marcha, aunque esté fuera de horario.
+- **Comprobar pendientes ahora**: procesa toda la cola sin esperar al horario automático.
+- **Detener**: corta la comprobación en marcha (vuelve a la cola) y anula lo pedido a mano.
+- **Leer Bazarr ahora**: busca sincronizaciones nuevas sin esperar al siguiente escaneo.
+- **Registro** (abajo): qué está haciendo en cada momento (extraer audio, ffsubsync, alass, resultado).
+
 ## Instalación en Synology (Container Manager)
 
 1. Crea la carpeta `/volume1/docker/sync-doctor`.

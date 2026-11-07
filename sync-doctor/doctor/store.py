@@ -62,6 +62,11 @@ class Store:
             self.db.executemany("DELETE FROM items WHERE key = ?", [(k,) for k in gone])
             return len(gone)
 
+    def get(self, key):
+        with self.lock:
+            row = self.db.execute("SELECT * FROM items WHERE key = ?", (key,)).fetchone()
+        return dict(row) if row else None
+
     def next_pending(self):
         with self.lock:
             rows = self.db.execute("SELECT * FROM items WHERE status = 'pending'").fetchall()

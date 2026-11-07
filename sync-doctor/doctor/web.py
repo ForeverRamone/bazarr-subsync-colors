@@ -4,6 +4,7 @@ import logging
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .logbuf import BUFFER
 from .verify import VERDICTS
 
 log = logging.getLogger("doctor.web")
@@ -39,18 +40,29 @@ a{color:inherit}.muted{color:var(--mut);font-size:12px}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px}
 .tabs a{padding:8px 14px;text-decoration:none;color:var(--mut);border-bottom:2px solid transparent;margin-bottom:-1px}
 .tabs a.on{color:var(--fg);border-bottom-color:var(--fg);font-weight:600}
+button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+button:disabled{opacity:.55;cursor:default}
+.status{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 16px;color:var(--mut)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--err)}.dot.busy{background:var(--fix);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+details.log{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+details.log summary{padding:10px 12px;cursor:pointer;font-weight:600}
+#log{margin:0;padding:8px 12px 12px;max-height:340px;overflow:auto;font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;border-top:1px solid var(--line)}
+#log .WARNING{color:var(--dis)}#log .ERROR{color:#e03131}
 </style></head><body><main>
 <h1>Sync Doctor</h1>
-<p class="sub" id="status">Cargando…</p>
+<p class="status"><span class="dot" id="dot"></span><span id="status">Cargando…</span></p>
 <nav class="tabs" id="tabs"></nav>
 <div class="cards" id="cards"></div>
-<div class="bar"><button id="scan">Leer Bazarr ahora</button><button id="retry">Reintentar errores</button>
+<div class="bar"><button id="runall" class="primary">Comprobar pendientes ahora</button><button id="stop">Detener</button>
+<button id="scan">Leer Bazarr ahora</button><button id="retry">Reintentar errores</button>
 <label><input type="checkbox" id="controls" checked> Mostrar grupo de control (verdes)</label></div>
 <div class="wrap"><table><thead><tr>
 <th>Título</th><th>Bazarr</th><th>Veredicto</th><th>ffsubsync</th><th>alass</th><th>Comprobado</th><th></th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <p class="muted">ffsubsync y alass indican cuánto moverían el subtítulo <i>actual</i>. Cerca de 0 = ya está bien.
 "Tramos" &gt; 1 significa que alass tuvo que cortar el sub en partes (escenas que no coinciden).</p>
+<details class="log" id="logbox" open><summary>Registro</summary><pre id="log"></pre></details>
 </main><script>
 const LABELS = __VERDICTS__;
 const BAZARR = __BAZARR__;
@@ -59,15 +71,26 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 const sec = v => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + " s";
 const when = t => t ? new Date(t * 1000).toLocaleString() : "";
 function eng(e){ if(!e) return "–"; let s = sec(e.median); if(e.segments > 1) s += ` · ${e.segments} tramos`; if(e.split_fraction) s += ` · ${Math.round(e.split_fraction*100)}% fuera`; return s; }
+const busy = () => data && (data.state.current || data.state.queue.length || data.state.run_all);
 async function load(){
-  data = await fetch("api/results").then(r => r.json());
+  try { data = await fetch("api/results").then(r => r.json()); } catch(e) { return; }
   const st = data.state;
-  document.getElementById("status").textContent =
-    (st.current ? `Comprobando: ${st.current}. ` : "En espera. ") +
-    (st.last_scan ? `Último escaneo: ${when(st.last_scan)}.` : "") +
-    (st.last_scan_error ? ` Error leyendo Bazarr: ${st.last_scan_error}` : "");
+  const pending = data.items.filter(i => i.status === "pending").length;
+  let txt;
+  if (st.current) txt = `Comprobando: ${st.current}.`;
+  else if (st.run_all) txt = "Procesando la cola…";
+  else if (!st.in_active_hours && pending) txt = `En espera: ${pending} pendientes para el horario automático (${st.active_hours} h), o pulsa "Comprobar pendientes ahora".`;
+  else txt = pending ? `${pending} pendientes.` : "Todo comprobado.";
+  if (st.queue.length) txt += ` En cola a mano: ${st.queue.length}.`;
+  if (st.last_scan) txt += ` Bazarr leído: ${when(st.last_scan)}.`;
+  if (st.last_scan_error) txt += ` Error leyendo Bazarr: ${st.last_scan_error}`;
+  document.getElementById("status").textContent = txt;
+  document.getElementById("dot").className = "dot" + (busy() ? " busy" : "");
+  document.getElementById("runall").disabled = !!st.run_all || !pending;
+  document.getElementById("stop").disabled = !busy();
   render();
 }
+async function post(url){ await fetch(url, {method: "POST"}); await load(); pollLog(); }
 const TABS = {all: ["Todo", null], peliculas: ["Películas", "movies"], series: ["Series", "episodes"]};
 function currentTab(){
   const kinds = data.state.kinds || ["movies", "episodes"];
@@ -109,16 +132,43 @@ function render(){
       <td><span class="pill v-${esc(v)}">${esc(v==="pending"?"Pendiente":LABELS[v])}</span></td>
       <td class="num">${eng(r.ffsubsync)}</td><td class="num">${eng(r.alass)}</td>
       <td class="muted">${when(i.checked_at)}</td>
-      <td><button data-k="${esc(i.key)}">Repetir</button></td></tr>`;
+      <td>${rowButton(i)}</td></tr>`;
   }).join("");
-  document.querySelectorAll("button[data-k]").forEach(b => b.onclick = async () => {
-    await fetch("api/recheck?key=" + encodeURIComponent(b.dataset.k), {method:"POST"}); load(); });
+  document.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
+    b.disabled = true; b.textContent = "En cola…";
+    post("api/run?key=" + encodeURIComponent(b.dataset.k));
+  });
+}
+function rowButton(i){
+  const st = data.state;
+  if (st.current_key === i.key) return `<button disabled>Comprobando…</button>`;
+  if (st.queue.includes(i.key)) return `<button disabled>En cola…</button>`;
+  return `<button data-k="${esc(i.key)}">${i.status === "done" ? "Volver a comprobar" : "Comprobar ahora"}</button>`;
+}
+// Registro
+let logAfter = 0, logBusy = false;
+async function pollLog(){
+  if (!document.getElementById("logbox").open || logBusy) return;
+  logBusy = true;
+  let lines;
+  try { lines = (await fetch("api/log?after=" + logAfter).then(r => r.json())).lines; }
+  catch(e) { return; } finally { logBusy = false; }
+  lines = lines.filter(l => l.n > logAfter);
+  if (!lines.length) return;
+  const pre = document.getElementById("log");
+  const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+  pre.insertAdjacentHTML("beforeend", lines.map(l => `<span class="${esc(l.level)}">${esc(l.text)}</span>\n`).join(""));
+  logAfter = lines[lines.length - 1].n;
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
 }
 document.getElementById("controls").onchange = render;
 window.addEventListener("hashchange", () => { filter = null; render(); });
-document.getElementById("scan").onclick = async () => { await fetch("api/scan", {method:"POST"}); setTimeout(load, 1500); };
-document.getElementById("retry").onclick = async () => { await fetch("api/recheck", {method:"POST"}); load(); };
-load(); setInterval(load, 30000);
+document.getElementById("runall").onclick = () => post("api/run");
+document.getElementById("stop").onclick = () => post("api/stop");
+document.getElementById("scan").onclick = async () => { await post("api/scan"); setTimeout(load, 2000); };
+document.getElementById("retry").onclick = () => post("api/retry-errors");
+document.getElementById("logbox").ontoggle = pollLog;
+(async function loop(){ await load(); await pollLog(); setTimeout(loop, busy() ? 3000 : 15000); })();
 </script></body></html>"""
 
 
@@ -144,8 +194,16 @@ def make_handler(cfg, store, worker):
             if path in ("/", "/index.html"):
                 self._send(200, page, "text/html; charset=utf-8")
             elif path == "/api/results":
-                body = {"state": worker.state, "items": store.all()}
+                body = {"state": worker.public_state(), "items": store.all()}
                 self._send(200, json.dumps(body, ensure_ascii=False), "application/json; charset=utf-8")
+            elif path == "/api/log":
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                try:
+                    after = int(q.get("after", ["0"])[0])
+                except ValueError:
+                    after = 0
+                self._send(200, json.dumps({"lines": BUFFER.since(after)}, ensure_ascii=False),
+                           "application/json; charset=utf-8")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             else:
@@ -154,11 +212,20 @@ def make_handler(cfg, store, worker):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             if url.path == "/api/scan":
-                worker.wake.set()
-            elif url.path == "/api/recheck":
+                worker.request_scan()
+            elif url.path == "/api/run":
                 key = urllib.parse.parse_qs(url.query).get("key", [None])[0]
-                store.requeue(key)
-                worker.wake.set()
+                if key:
+                    if not worker.request_one(key):
+                        return self._send(404, "no existe", "text/plain")
+                else:
+                    worker.request_all()
+            elif url.path == "/api/stop":
+                worker.stop()
+            elif url.path == "/api/retry-errors":
+                for item in store.all():
+                    if item["verdict"] == "error":
+                        worker.request_one(item["key"])
             else:
                 return self._send(404, "not found", "text/plain")
             self._send(204, "", "text/plain")
