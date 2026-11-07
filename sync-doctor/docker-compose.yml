@@ -1,0 +1,17 @@
+services:
+  sync-doctor:
+    image: ghcr.io/foreverramone/bazarr-sync-doctor:latest
+    container_name: sync-doctor
+    restart: unless-stopped
+    environment:
+      - BAZARR_URL=http://192.168.0.60:6767
+      - BAZARR_API_KEY=pon_aqui_tu_api_key   # Bazarr → Settings → General → API Key
+      - TZ=Europe/Madrid
+      - ACTIVE_HOURS=1-8          # solo trabaja de 1:00 a 7:59; vacío = siempre
+      - SCAN_INTERVAL_MINUTES=60
+      - CONTROL_SAMPLES=5
+    volumes:
+      - /volume1/video:/video:ro            # misma ruta que ve Bazarr, en solo lectura
+      - /volume1/docker/sync-doctor:/data   # base de datos del informe
+    ports:
+      - 8686:8686

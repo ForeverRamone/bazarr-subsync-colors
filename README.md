@@ -1,5 +1,7 @@
 # Bazarr – colores de sincronización
 
+> En este repositorio hay también **[Sync Doctor](sync-doctor/)**, un docker que comprueba con ffsubsync y alass si las sincronizaciones de Bazarr han salido bien.
+
 Userscript para Chrome que hace visible el desplazamiento (offset) que aplica Bazarr al sincronizar subtítulos. No modifica Bazarr: solo cambia cómo se ve la web en tu navegador, así que las actualizaciones de Bazarr siguen llegando con normalidad.
 
 ## Qué hace
