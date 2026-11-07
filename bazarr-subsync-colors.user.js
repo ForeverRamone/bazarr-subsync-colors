@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bazarr – colores de sincronización
 // @namespace    fixforbazarr
-// @version      1.0.0
+// @version      1.0.1
 // @description  Muestra el desplazamiento de cada sincronización en el historial de Bazarr, colorea las filas según lo grande que sea y añade un panel con los subtítulos a revisar.
 // @homepageURL  https://github.com/ForeverRamone/bazarr-subsync-colors
 // @updateURL    https://raw.githubusercontent.com/ForeverRamone/bazarr-subsync-colors/main/bazarr-subsync-colors.user.js
@@ -280,24 +280,31 @@
     return json.data || [];
   }
 
-  // Para cada archivo de subtítulos se queda con su último evento. Solo cuenta
-  // si ese último evento es una sincronización (si después se descargó otro
-  // sub en la misma ruta, el dato de sync ya no vale).
+  // Para cada archivo de subtítulos se queda con su última sincronización, y
+  // la descarta si después se borró o se descargó otro sub en la misma ruta.
+  // Ojo: Bazarr registra la descarga en el mismo segundo que la sincronización
+  // pero justo después, así que una descarga con la misma fecha y ruta es parte
+  // de la misma operación y no invalida la sincronización.
   function latestSyncs(rows, kind) {
-    const seen = new Set();
+    const done = new Set();
+    const newer = new Map(); // ruta → eventos más recientes que la invalidan
     const out = [];
     for (const r of rows) {
       const path = r.subtitles_path || r.subtitlesPath;
       const videoId = kind === "movies" ? r.radarrId : r.sonarrEpisodeId;
       const lang = r.language ? `${r.language.code2}${r.language.forced ? ":f" : ""}${r.language.hi ? ":hi" : ""}` : "";
       const key = path || `${videoId}|${lang}`;
+      if (done.has(key)) continue;
+      const ts = r.parsed_timestamp || r.parsedTimestamp || r.timestamp;
       const sync = parseSync(r.description);
-      if (seen.has(key)) continue;
       if (sync) {
-        seen.add(key);
-        out.push({ kind, row: r, sync });
+        done.add(key);
+        const evs = newer.get(key) || [];
+        const stale = evs.some((e) => e.action === 0 || e.ts !== ts);
+        if (!stale) out.push({ kind, row: r, sync });
       } else if (REPLACING_ACTIONS.has(r.action)) {
-        seen.add(key);
+        if (!newer.has(key)) newer.set(key, []);
+        newer.get(key).push({ action: r.action, ts });
       }
     }
     return out;
