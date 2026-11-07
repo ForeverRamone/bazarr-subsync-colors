@@ -25,7 +25,7 @@ Cada comprobación tarda unos minutos por película (lo que más tarda es leer e
 1. Crea la carpeta `/volume1/docker/sync-doctor`.
 2. Container Manager → **Proyecto** → **Crear**. Nombre `sync-doctor`, ruta `/volume1/docker/sync-doctor`, y en origen elige **Crear docker-compose.yml** y pega el contenido de [`docker-compose.yml`](docker-compose.yml).
 3. Cambia `BAZARR_API_KEY` por la clave de Bazarr (*Settings → General → Security → API Key*).
-4. Crea el proyecto. Abre `http://192.168.0.60:8686` para ver el informe.
+4. Crea el proyecto. Abre `http://192.168.0.60:8687` para ver el informe.
 
 ## Ajustes (variables de entorno)
 
@@ -45,7 +45,7 @@ Cada comprobación tarda unos minutos por película (lo que más tarda es leer e
 
 - La carpeta de vídeo se monta en **solo lectura** (`:ro`): el contenedor no puede modificar ni borrar nada.
 - La clave de la API solo se usa para **leer** el historial y los datos de películas y episodios.
-- La web del informe no tiene contraseña: no abras el puerto 8686 fuera de tu red.
+- La web del informe no tiene contraseña: no abras el puerto 8687 fuera de tu red.
 
 ## Próximas fases
 

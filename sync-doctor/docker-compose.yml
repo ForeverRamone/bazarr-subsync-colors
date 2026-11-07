@@ -14,4 +14,4 @@ services:
       - /volume1/video:/video:ro            # misma ruta que ve Bazarr, en solo lectura
       - /volume1/docker/sync-doctor:/data   # base de datos del informe
     ports:
-      - 8686:8686
+      - 8687:8686   # 8686 lo usa Lidarr en el NAS
