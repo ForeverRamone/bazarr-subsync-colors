@@ -37,3 +37,13 @@ jobs:
             org.opencontainers.image.description=Comprueba con ffsubsync y alass las sincronizaciones de Bazarr
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          IMG=ghcr.io/foreverramone/bazarr-sync-doctor:${{ github.sha }}
+          docker run --rm "$IMG" sh -c "alass-cli --version && ffsubsync --version && ffmpeg -version | head -1 && python -c 'import doctor.worker, doctor.web; print(\"imports ok\")'"
+          docker run -d --name sd -e BAZARR_URL=http://127.0.0.1:1 -e BAZARR_API_KEY=x -p 8686:8686 "$IMG"
+          for i in $(seq 1 20); do curl -fs http://localhost:8686/health && break; sleep 1; done
+          curl -fs http://localhost:8686/api/results
+          docker logs sd
+          docker rm -f sd
