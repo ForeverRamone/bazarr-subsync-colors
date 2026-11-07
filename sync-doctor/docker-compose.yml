@@ -7,6 +7,7 @@ services:
       - BAZARR_URL=http://192.168.0.60:6767
       - BAZARR_API_KEY=pon_aqui_tu_api_key   # Bazarr → Settings → General → API Key
       - TZ=Europe/Madrid
+      - MEDIA_TYPES=movies,series  # qué revisar: movies, series o movies,series
       - ACTIVE_HOURS=1-8          # solo trabaja de 1:00 a 7:59; vacío = siempre
       - SCAN_INTERVAL_MINUTES=60
       - CONTROL_SAMPLES=5

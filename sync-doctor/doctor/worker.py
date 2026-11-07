@@ -17,13 +17,14 @@ class Worker:
         self.store = store
         self.bazarr = Bazarr(cfg.bazarr_url, cfg.bazarr_api_key)
         self.wake = threading.Event()
-        self.state = {"current": None, "last_scan": None, "last_scan_error": None}
+        self.state = {"current": None, "last_scan": None, "last_scan_error": None, "kinds": cfg.kinds}
 
     # ------------------------------------------------------------------ escaneo
     def scan(self):
         live = set()
         added = 0
-        for kind in ("movies", "episodes"):
+        # Solo los tipos activados en MEDIA_TYPES; los demás salen del informe.
+        for kind in self.cfg.kinds:
             syncs = latest_syncs(self.bazarr.history(kind), kind)
             greens = []
             for s in syncs:

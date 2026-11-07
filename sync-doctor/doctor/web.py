@@ -36,9 +36,13 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .lv{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 .lv-red{background:#e03131}.lv-yellow{background:#f08c00}.lv-green{background:#2f9e44}
 a{color:inherit}.muted{color:var(--mut);font-size:12px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.tabs a{padding:8px 14px;text-decoration:none;color:var(--mut);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a.on{color:var(--fg);border-bottom-color:var(--fg);font-weight:600}
 </style></head><body><main>
 <h1>Sync Doctor</h1>
 <p class="sub" id="status">Cargando…</p>
+<nav class="tabs" id="tabs"></nav>
 <div class="cards" id="cards"></div>
 <div class="bar"><button id="scan">Leer Bazarr ahora</button><button id="retry">Reintentar errores</button>
 <label><input type="checkbox" id="controls" checked> Mostrar grupo de control (verdes)</label></div>
@@ -64,9 +68,29 @@ async function load(){
     (st.last_scan_error ? ` Error leyendo Bazarr: ${st.last_scan_error}` : "");
   render();
 }
+const TABS = {all: ["Todo", null], peliculas: ["Películas", "movies"], series: ["Series", "episodes"]};
+function currentTab(){
+  const kinds = data.state.kinds || ["movies", "episodes"];
+  const t = location.hash.slice(1);
+  if (kinds.length < 2) return kinds[0] === "movies" ? "peliculas" : "series";
+  return TABS[t] ? t : "all";
+}
 function render(){
   const showCtl = document.getElementById("controls").checked;
-  const items = data.items.filter(i => showCtl || !i.is_control);
+  const kinds = data.state.kinds || ["movies", "episodes"];
+  const tab = currentTab();
+  const visible = data.items.filter(i => showCtl || !i.is_control);
+  const tabsEl = document.getElementById("tabs");
+  if (kinds.length < 2) {
+    tabsEl.innerHTML = `<a class="on">${TABS[tab][0]}</a><span class="muted" style="align-self:center;margin-left:8px">(solo se revisan ${TABS[tab][0].toLowerCase()}: MEDIA_TYPES)</span>`;
+  } else {
+    tabsEl.innerHTML = Object.entries(TABS).map(([k, [label, kind]]) => {
+      const n = visible.filter(i => !kind || i.kind === kind).length;
+      return `<a href="#${k}" class="${k === tab ? "on" : ""}">${label} (${n})</a>`;
+    }).join("");
+  }
+  const tabKind = TABS[tab][1];
+  const items = visible.filter(i => !tabKind || i.kind === tabKind);
   const counts = {};
   for(const i of items){ const v = i.verdict || "pending"; counts[v] = (counts[v]||0) + 1; }
   const order = ["pending","ok","fixable","other_cut","disagree","gone","error","unsupported"];
@@ -91,6 +115,7 @@ function render(){
     await fetch("api/recheck?key=" + encodeURIComponent(b.dataset.k), {method:"POST"}); load(); });
 }
 document.getElementById("controls").onchange = render;
+window.addEventListener("hashchange", () => { filter = null; render(); });
 document.getElementById("scan").onclick = async () => { await fetch("api/scan", {method:"POST"}); setTimeout(load, 1500); };
 document.getElementById("retry").onclick = async () => { await fetch("api/recheck", {method:"POST"}); load(); };
 load(); setInterval(load, 30000);

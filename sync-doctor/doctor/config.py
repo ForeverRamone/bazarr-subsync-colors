@@ -21,8 +21,28 @@ def _path_map(raw):
     return pairs
 
 
+_KIND_ALIASES = {
+    "movies": "movies", "movie": "movies", "peliculas": "movies", "películas": "movies", "cine": "movies",
+    "episodes": "episodes", "episode": "episodes", "series": "episodes", "tv": "episodes",
+}
+
+
+def _kinds(raw):
+    """MEDIA_TYPES="movies,series" → ["movies", "episodes"] (nombres de la API de Bazarr)."""
+    kinds = []
+    for part in (raw or "movies,series").replace(";", ",").split(","):
+        kind = _KIND_ALIASES.get(part.strip().lower())
+        if part.strip() and not kind:
+            raise SystemExit(f"MEDIA_TYPES: valor desconocido '{part.strip()}' (usa movies, series o los dos)")
+        if kind and kind not in kinds:
+            kinds.append(kind)
+    return kinds or ["movies", "episodes"]
+
+
 @dataclass
 class Config:
+    # Qué revisar: "movies", "series" o "movies,series" (por defecto, los dos).
+    kinds: list = field(default_factory=lambda: _kinds(os.environ.get("MEDIA_TYPES", "")))
     bazarr_url: str = field(default_factory=lambda: os.environ.get("BAZARR_URL", "").rstrip("/"))
     bazarr_api_key: str = field(default_factory=lambda: os.environ.get("BAZARR_API_KEY", ""))
     path_map: list = field(default_factory=lambda: _path_map(os.environ.get("PATH_MAP", "")))

@@ -33,6 +33,7 @@ Cada comprobación tarda unos minutos por película (lo que más tarda es leer e
 |---|---|---|
 | `BAZARR_URL` | — | Dirección de Bazarr |
 | `BAZARR_API_KEY` | — | Clave de la API de Bazarr (solo se usa para leer) |
+| `MEDIA_TYPES` | `movies,series` | Qué revisar: `movies` (películas), `series` o las dos. Al quitar un tipo, sus resultados salen del informe en el siguiente escaneo. |
 | `ACTIVE_HOURS` | vacío (siempre) | Horas en las que trabaja, p. ej. `1-8` |
 | `SCAN_INTERVAL_MINUTES` | `60` | Cada cuánto lee el historial de Bazarr |
 | `CONTROL_SAMPLES` | `5` | Subs verdes que también comprueba, para calibrar |
