@@ -83,6 +83,7 @@ col.c-off{width:96px}col.c-ver{width:150px}col.c-eng{width:210px}col.c-act{width
 .acts{display:flex;flex-direction:column;gap:5px}
 .acts button{padding:5px 10px;font-size:13px;width:100%;text-align:center}
 .acts .warn{color:var(--cut);border-color:color-mix(in srgb,var(--cut) 50%,var(--line))}
+.acts .okb{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 50%,var(--line))}
 .acts .fixb{color:var(--fix);border-color:color-mix(in srgb,var(--fix) 50%,var(--line))}
 .empty{padding:28px;text-align:center;color:var(--mut)}
 .v-ok{--c:var(--ok)}.v-fixable{--c:var(--fix)}.v-other_cut{--c:var(--cut)}.v-disagree{--c:var(--dis)}
@@ -322,7 +323,7 @@ function row(i){
     <td class="off">${i.source === "disk"
       ? `<span class="lv lv-unknown" title="Sin sincronización en el historial de Bazarr"></span><span class="muted">sin datos</span>`
       : `<span class="lv lv-${esc(i.level)}" title="Color en Bazarr"></span>${sec(i.bazarr_offset)}`}</td>
-    <td class="ver"><span class="pill v-${esc(v)}" title="${esc(v==="pending"?"Aún sin comprobar":LABELS[v])}">${SHORT[v] || v}</span>
+    <td class="ver"><span class="pill v-${esc(v)}" title="${esc(i.manual_ok ? "Marcado como bien a mano (antes: " + (SHORT[i.prev_verdict] || "?") + ")" : v==="pending"?"Aún sin comprobar":LABELS[v])}">${i.manual_ok ? "Bien ✓ a mano" : (SHORT[v] || v)}</span>
       <span class="when">${ago(i.checked_at)}</span></td>
     <td class="engc">${engines(r)}</td>
     <td class="actc"><div class="acts">${actionButtons(i)}${checkButton(i)}</div></td>
@@ -354,6 +355,10 @@ function actionButtons(i){
     out.push(`<button class="warn" data-act="replace" data-key="${k}" data-title="${esc(i.title)}" title="Bazarr lo borra, lo mete en su lista negra y descarga otro">Descartar y buscar</button>`);
   if (v === "gone")
     out.push(`<button data-act="search" data-key="${k}" title="Bazarr busca y descarga un sub de este idioma">Buscar sub</button>`);
+  if (i.manual_ok)
+    out.push(`<button data-act="unmark_ok" data-key="${k}" title="Vuelve al veredicto anterior">Quitar marca</button>`);
+  else if (["other_cut","disagree","fixable","error"].includes(v))
+    out.push(`<button class="okb" data-act="mark_ok" data-key="${k}" title="Lo has comprobado tú y está bien: deja de salir como problema">Marcar como bien</button>`);
   return out.join("");
 }
 async function act(b){
@@ -362,7 +367,7 @@ async function act(b){
   b.disabled = true; b.textContent = "Enviando…";
   const res = await fetch(`api/action?do=${what}&key=${encodeURIComponent(b.dataset.key)}`, {method:"POST"})
     .then(r => r.json()).catch(() => ({ok:false, message:"sin respuesta"}));
-  toast(res.ok ? "Enviado a Bazarr" : "No se pudo: " + res.message);
+  toast(res.ok ? (what.endsWith("mark_ok") ? res.message : "Enviado a Bazarr") : "No se pudo: " + res.message);
   await load(); pollLog();
 }
 

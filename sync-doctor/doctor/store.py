@@ -47,6 +47,8 @@ NEW_COLUMNS = {
     "action_at": "REAL",
     "action_note": "TEXT",
     "source": "TEXT DEFAULT 'history'",  # history | disk (sub sin sincronización en el historial)
+    "manual_ok": "INTEGER DEFAULT 0",     # marcado como bien a mano
+    "prev_verdict": "TEXT",               # veredicto antes de marcarlo (para deshacer)
 }
 
 # Orden de la cola: rojos, amarillos, los del disco (sin datos) y por último los verdes.
@@ -148,11 +150,22 @@ class Store:
         rows = sorted(rows, key=lambda r: (r["is_control"], LEVEL_ORDER.get(r["level"], 9), -abs(r["bazarr_offset"] or 0)))
         return dict(rows[0])
 
+    def mark_ok(self, key, on=True):
+        """Marca a mano como bien (o deshace la marca, recuperando el veredicto anterior)."""
+        with self.lock, self.db:
+            if on:
+                self.db.execute("""UPDATE items SET prev_verdict = verdict, verdict = 'ok', manual_ok = 1,
+                                   action_note = 'Marcado como bien a mano.' WHERE key = ?""", (key,))
+            else:
+                self.db.execute("""UPDATE items SET verdict = COALESCE(prev_verdict, verdict), manual_ok = 0,
+                                   prev_verdict = NULL, action_note = NULL WHERE key = ?""", (key,))
+
     def save_result(self, key, verdict, video_path, sub_path, result, note=None, status="done"):
+        # Una comprobación nueva sustituye a la marca manual.
         with self.lock, self.db:
             self.db.execute(
                 """UPDATE items SET status = ?, verdict = ?, video_path = ?, sub_path = ?,
-                   result_json = ?, note = ?, checked_at = ? WHERE key = ?""",
+                   result_json = ?, note = ?, checked_at = ?, manual_ok = 0, prev_verdict = NULL WHERE key = ?""",
                 (status, verdict, video_path, sub_path, json.dumps(result, ensure_ascii=False), note, time.time(), key),
             )
 

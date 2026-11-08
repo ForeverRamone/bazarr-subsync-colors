@@ -236,6 +236,11 @@ class Worker:
             acts.append("replace")
         if v == "gone":
             acts.append("search")
+        # Marca manual: solo cambia el informe, no toca Bazarr.
+        if item.get("manual_ok"):
+            acts.append("unmark_ok")
+        elif v in ("other_cut", "disagree", "fixable", "error"):
+            acts.append("mark_ok")
         return acts
 
     def perform(self, key, action, auto=False):
@@ -246,6 +251,17 @@ class Worker:
         if action not in self.available_actions(item):
             return False, "Esa acción no aplica a este veredicto"
         mkey = media_key(item)
+        if action in ("mark_ok", "unmark_ok"):
+            if auto:
+                return False, "La marca manual no es automática"
+            self.store.mark_ok(key, on=action == "mark_ok")
+            if action == "mark_ok":
+                self.store.reset_attempts(mkey)
+                log.info("Marcado como bien a mano: %s (era %s)", item["title"],
+                         VERDICTS.get(item["verdict"], item["verdict"]))
+                return True, "Marcado como bien"
+            log.info("Quitada la marca manual: %s", item["title"])
+            return True, "Marca quitada"
         n = self.store.attempts(mkey)
         if auto and n >= self.cfg.max_attempts:
             self.store.set_action_note(key, f"Límite de {self.cfg.max_attempts} acciones alcanzado: revísalo a mano.")

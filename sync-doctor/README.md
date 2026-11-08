@@ -35,6 +35,7 @@ Se comprueban todos una vez (y otra si el archivo cambia), después de los rojos
 | **Aplicar ±X s** | Desplaza el sub con su herramienta "ajustar tiempos" (la media de lo que dicen ffsubsync y alass). Después Sync Doctor lo vuelve a comprobar. |
 | **Descartar y buscar otro** | Borra el sub, lo mete en su **lista negra** y descarga el siguiente mejor (que sincroniza como siempre). Si el sub no tiene proveedor (subido a mano), solo lo borra y pide otro: podría volver a elegir el mismo. |
 | **Buscar sub** | Busca y descarga el mejor sub de ese idioma. |
+| **Marcar como bien** | No toca Bazarr: si lo has comprobado tú y está bien, deja de salir como problema ("Bien ✓ a mano") y las acciones automáticas no lo tocan. **Quitar marca** lo deshace. Si se vuelve a comprobar (o el sub cambia), manda la comprobación nueva. |
 
 Tras descartar o buscar, Sync Doctor mira el historial de Bazarr cada minuto durante 30 minutos. En cuanto aparece el sub nuevo, **lo comprueba al momento**, a cualquier hora. Si Bazarr no encuentra nada, la fila lo indica para que lo revises a mano.
 
