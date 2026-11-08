@@ -1,6 +1,7 @@
 """Cliente mínimo de la API de Bazarr (solo lectura) y detección de sincronizaciones."""
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -17,14 +18,60 @@ class Bazarr:
         self.api_key = api_key
         self.timeout = timeout
 
-    def _get(self, path, params=None):
+    def _request(self, method, path, params=None):
+        # Bazarr lee los parámetros con reqparse "values": valen en la URL para cualquier método.
         query = urllib.parse.urlencode(params or [], doseq=True)
         req = urllib.request.Request(
             f"{self.url}/api/{path}" + (f"?{query}" if query else ""),
+            method=method,
             headers={"X-API-KEY": self.api_key, "Accept": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            return json.load(resp)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace").strip()[:200]
+            raise RuntimeError(f"Bazarr respondió {e.code} a {method} {path}: {detail}") from None
+        return json.loads(body) if body.strip() else None
+
+    def _get(self, path, params=None):
+        return self._request("GET", path, params)
+
+    # --------------------------------------------------------- acciones (escriben)
+    @staticmethod
+    def _ids(kind, media_id, series_id):
+        if kind == "movies":
+            return [("radarrid", media_id)]
+        return [("seriesid", series_id), ("episodeid", media_id)]
+
+    def blacklist(self, kind, media_id, series_id, provider, subs_id, language, subtitles_path):
+        """Borra el sub, lo mete en la lista negra y Bazarr busca otro él solo."""
+        self._request("POST", f"{kind}/blacklist", self._ids(kind, media_id, series_id) + [
+            ("provider", provider), ("subs_id", subs_id), ("language", language),
+            ("subtitles_path", subtitles_path)])
+
+    def delete_subtitle(self, kind, media_id, series_id, language, forced, hi, path):
+        self._request("DELETE", f"{kind}/subtitles", self._ids(kind, media_id, series_id) + [
+            ("language", language), ("forced", str(forced)), ("hi", str(hi)), ("path", path)])
+
+    def download_subtitle(self, kind, media_id, series_id, language, forced, hi):
+        """Busca y descarga el mejor sub de ese idioma (en segundo plano, en Bazarr)."""
+        self._request("PATCH", f"{kind}/subtitles", self._ids(kind, media_id, series_id) + [
+            ("language", language), ("forced", str(forced)), ("hi", str(hi))])
+
+    def shift_subtitle(self, kind, media_id, language, forced, hi, path, seconds):
+        """Desplaza el sub con la herramienta "ajustar tiempos" de Bazarr."""
+        ms_total = int(round(abs(seconds) * 1000))
+        sign = -1 if seconds < 0 else 1
+        h, rest = divmod(ms_total, 3_600_000)
+        m, rest = divmod(rest, 60_000)
+        s, ms = divmod(rest, 1000)
+        action = f"shift_offset(h={sign * h},m={sign * m},s={sign * s},ms={sign * ms})"
+        self._request("PATCH", "subtitles", [
+            ("action", action), ("language", language), ("path", path),
+            ("type", "movie" if kind == "movies" else "episode"), ("id", media_id),
+            ("forced", str(forced)), ("hi", str(hi))])
+        return action
 
     def history(self, kind):
         """kind: 'movies' o 'episodes'. Devuelve todo el historial, del más nuevo al más viejo."""
@@ -75,7 +122,11 @@ def latest_syncs(rows, kind):
             done.add(key)
             evs = newer.get(key, [])
             if not any(e[0] == 0 or e[1] != ts for e in evs):
-                out.append({"row": r, "offset": sync[0], "fps": sync[1], "ts": ts, "path": path, "media_id": media_id})
+                # La descarga que acompaña a esta sincronización: de ahí sale el
+                # proveedor y el id del sub, necesarios para la lista negra.
+                dl = next((e for e in evs if e[1] == ts and e[0] in (1, 2, 3)), None)
+                out.append({"row": r, "offset": sync[0], "fps": sync[1], "ts": ts, "path": path, "media_id": media_id,
+                            "provider": dl[2] if dl else None, "subs_id": dl[3] if dl else None})
         elif r.get("action") in REPLACING_ACTIONS:
-            newer.setdefault(key, []).append((r.get("action"), ts))
+            newer.setdefault(key, []).append((r.get("action"), ts, r.get("provider"), r.get("subs_id")))
     return out

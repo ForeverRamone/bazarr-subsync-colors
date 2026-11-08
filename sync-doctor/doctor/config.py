@@ -39,6 +39,24 @@ def _kinds(raw):
     return kinds or ["movies", "episodes"]
 
 
+# Qué acción se permite para cada veredicto.
+AUTO_ALLOWED = {
+    "other_cut": "replace",   # otra versión → descartar y buscar otro
+    "disagree": "replace",    # dudoso → descartar y buscar otro
+    "fixable": "fix",         # corregible → aplicar el desplazamiento
+    "gone": "search",         # ya no está → buscar sub
+}
+
+
+def _auto(raw):
+    """AUTO_ACTIONS="other_cut,fixable" → {"other_cut": "replace", "fixable": "fix"}"""
+    out = {}
+    for part in filter(None, (p.strip() for p in (raw or "").split(","))):
+        if part in AUTO_ALLOWED:
+            out[part] = AUTO_ALLOWED[part]
+    return out
+
+
 @dataclass
 class Config:
     # Qué revisar: "movies", "series" o "movies,series" (por defecto, los dos).
@@ -69,6 +87,54 @@ class Config:
     ffsubsync: str = field(default_factory=lambda: os.environ.get("FFSUBSYNC_PATH", "ffsubsync"))
     alass: str = field(default_factory=lambda: os.environ.get("ALASS_PATH", "alass-cli"))
     engine_timeout: int = field(default_factory=lambda: _int("ENGINE_TIMEOUT_SECONDS", 1800))
+
+    # Acciones automáticas tras comprobar (por defecto ninguna). Veredicto → acción.
+    auto_actions: dict = field(default_factory=lambda: _auto(os.environ.get("AUTO_ACTIONS", "")))
+    # Máximo de acciones por título e idioma (evita vaciar proveedores en bucle).
+    max_attempts: int = field(default_factory=lambda: _int("MAX_ATTEMPTS", 3))
+
+    # Ajustes que se pueden cambiar desde la web (se guardan en la base de datos).
+    EDITABLE = ("kinds", "active_hours", "auto_actions", "max_attempts", "control_samples")
+
+    def editable(self):
+        return {k: getattr(self, k) for k in self.EDITABLE}
+
+    def apply(self, values):
+        """Valida y aplica ajustes que vienen de la web o de la base de datos."""
+        clean = {}
+        if "kinds" in values:
+            kinds = [k for k in values["kinds"] if k in ("movies", "episodes")]
+            if not kinds:
+                raise ValueError("Elige al menos películas o series")
+            clean["kinds"] = kinds
+        if "active_hours" in values:
+            ah = str(values["active_hours"] or "").strip()
+            if ah:
+                start, _, end = ah.partition("-")
+                if not (start.isdigit() and end.isdigit() and 0 <= int(start) <= 24 and 0 <= int(end) <= 24):
+                    raise ValueError("Horario no válido: usa por ejemplo 1-8, o déjalo vacío")
+            clean["active_hours"] = ah
+        if "auto_actions" in values:
+            clean["auto_actions"] = {v: a for v, a in (values["auto_actions"] or {}).items()
+                                     if AUTO_ALLOWED.get(v) == a}
+        if "max_attempts" in values:
+            clean["max_attempts"] = max(1, min(10, int(values["max_attempts"])))
+        if "control_samples" in values:
+            clean["control_samples"] = max(0, min(50, int(values["control_samples"])))
+        for k, v in clean.items():
+            setattr(self, k, v)
+        return clean
+
+    def bazarr_path(self, local_path):
+        """Lo contrario de local_path: la ruta tal como la ve Bazarr."""
+        if not local_path:
+            return local_path
+        for src, dst in self.path_map:
+            norm = local_path.replace("\\", "/")
+            d = dst.replace("\\", "/")
+            if norm == d or norm.startswith(d + "/"):
+                return src + norm[len(d):]
+        return local_path
 
     def local_path(self, bazarr_path):
         """Convierte una ruta tal como la ve Bazarr en la ruta dentro de este contenedor."""

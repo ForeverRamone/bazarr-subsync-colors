@@ -49,8 +49,41 @@ details.log{margin-top:16px;background:var(--card);border:1px solid var(--line);
 details.log summary{padding:10px 12px;cursor:pointer;font-weight:600}
 #log{margin:0;padding:8px 12px 12px;max-height:340px;overflow:auto;font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;border-top:1px solid var(--line)}
 #log .WARNING{color:var(--dis)}#log .ERROR{color:#e03131}
+.head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.acts{display:flex;flex-direction:column;gap:4px;align-items:stretch}
+.acts button{white-space:nowrap}
+button.warn{border-color:var(--cut);color:var(--cut)}button.fix{border-color:var(--fix);color:var(--fix)}
+.note{color:var(--fix);font-size:12px;margin-top:2px}
+.auto{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid var(--line);color:var(--mut)}
+.auto.on{border-color:var(--cut);color:var(--cut)}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);padding:0;width:min(520px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog form{padding:18px 20px}dialog h2{margin:0 0 12px;font-size:17px}
+dialog fieldset{border:1px solid var(--line);border-radius:8px;margin:0 0 12px;padding:8px 12px}
+dialog legend{font-weight:600;padding:0 4px}
+dialog label{display:block;margin:6px 0}dialog input[type=text],dialog input[type=number]{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;width:110px}
+dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+#setmsg{color:#e03131;font-size:13px;min-height:1em}
 </style></head><body><main>
-<h1>Sync Doctor</h1>
+<div class="head"><h1>Sync Doctor</h1><div><span class="auto" id="autobadge"></span> <button id="openset">⚙ Ajustes</button></div></div>
+<dialog id="settings"><form method="dialog" id="setform">
+<h2>Ajustes</h2>
+<fieldset><legend>Qué revisar</legend>
+<label><input type="checkbox" name="k_movies"> Películas</label>
+<label><input type="checkbox" name="k_episodes"> Series</label></fieldset>
+<fieldset><legend>Cuándo</legend>
+<label>Horario automático <input type="text" name="active_hours" placeholder="1-8"> <span class="muted">vacío = siempre</span></label>
+<label>Verdes de control <input type="number" name="control_samples" min="0" max="50"></label></fieldset>
+<fieldset><legend>Acciones automáticas después de comprobar</legend>
+<label><input type="checkbox" name="a_other_cut"> <b>Otra versión</b> → descartar y buscar otro</label>
+<label><input type="checkbox" name="a_disagree"> <b>Dudoso</b> → descartar y buscar otro</label>
+<label><input type="checkbox" name="a_fixable"> <b>Corregible</b> → aplicar la corrección</label>
+<label><input type="checkbox" name="a_gone"> <b>Ya no está</b> → pedir a Bazarr que busque sub</label>
+<label>Máximo de acciones por título e idioma <input type="number" name="max_attempts" min="1" max="10"></label>
+<p class="muted" style="margin:4px 0 0">"Descartar" = Bazarr borra el sub, lo mete en su lista negra y descarga el siguiente mejor. Tras cada acción, el sub nuevo se comprueba en cuanto Bazarr lo tenga.</p></fieldset>
+<p id="setmsg"></p>
+<div class="row"><button value="cancel" formnovalidate>Cancelar</button><button id="saveset" class="primary" value="default">Guardar</button></div>
+</form></dialog>
 <p class="status"><span class="dot" id="dot"></span><span id="status">Cargando…</span></p>
 <nav class="tabs" id="tabs"></nav>
 <div class="cards" id="cards"></div>
@@ -82,6 +115,7 @@ async function load(){
   else if (!st.in_active_hours && pending) txt = `En espera: ${pending} pendientes para el horario automático (${st.active_hours} h), o pulsa "Comprobar pendientes ahora".`;
   else txt = pending ? `${pending} pendientes.` : "Todo comprobado.";
   if (st.queue.length) txt += ` En cola a mano: ${st.queue.length}.`;
+  if (st.watching && st.watching.length) txt += ` Esperando sub nuevo de Bazarr: ${st.watching.join(", ")}.`;
   if (st.last_scan) txt += ` Bazarr leído: ${when(st.last_scan)}.`;
   if (st.last_scan_error) txt += ` Error leyendo Bazarr: ${st.last_scan_error}`;
   document.getElementById("status").textContent = txt;
@@ -105,7 +139,7 @@ function render(){
   const visible = data.items.filter(i => showCtl || !i.is_control);
   const tabsEl = document.getElementById("tabs");
   if (kinds.length < 2) {
-    tabsEl.innerHTML = `<a class="on">${TABS[tab][0]}</a><span class="muted" style="align-self:center;margin-left:8px">(solo se revisan ${TABS[tab][0].toLowerCase()}: MEDIA_TYPES)</span>`;
+    tabsEl.innerHTML = `<a class="on">${TABS[tab][0]}</a><span class="muted" style="align-self:center;margin-left:8px">(solo se revisan ${TABS[tab][0].toLowerCase()}; cámbialo en Ajustes)</span>`;
   } else {
     tabsEl.innerHTML = Object.entries(TABS).map(([k, [label, kind]]) => {
       const n = visible.filter(i => !kind || i.kind === kind).length;
@@ -127,24 +161,82 @@ function render(){
     const r = i.result || {}; const v = i.verdict || "pending";
     const href = i.kind === "movies" ? `${BAZARR}/movies/${i.media_id}` : `${BAZARR}/series/${i.series_id}`;
     return `<tr><td><a href="${esc(href)}" target="_blank">${esc(i.title)}</a>
-      <div class="muted">${esc(i.language)}${i.is_control ? " · control" : ""}${i.note ? " · " + esc(i.note) : ""}${r.error ? " · " + esc(r.error) : ""}</div></td>
+      <div class="muted">${esc(i.language)}${i.is_control ? " · control" : ""}${i.provider ? " · " + esc(i.provider) : ""}${i.note ? " · " + esc(i.note) : ""}${r.error ? " · " + esc(r.error) : ""}</div>
+      ${i.action_note ? `<div class="note">${esc(i.action_note)}</div>` : ""}</td>
       <td class="num"><span class="lv lv-${esc(i.level)}"></span>${sec(i.bazarr_offset)}</td>
       <td><span class="pill v-${esc(v)}">${esc(v==="pending"?"Pendiente":LABELS[v])}</span></td>
       <td class="num">${eng(r.ffsubsync)}</td><td class="num">${eng(r.alass)}</td>
       <td class="muted">${when(i.checked_at)}</td>
-      <td>${rowButton(i)}</td></tr>`;
+      <td><div class="acts">${actionButtons(i)}${rowButton(i)}</div></td></tr>`;
   }).join("");
   document.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
     b.disabled = true; b.textContent = "En cola…";
     post("api/run?key=" + encodeURIComponent(b.dataset.k));
   });
+  document.querySelectorAll("button[data-act]").forEach(b => b.onclick = () => act(b));
 }
 function rowButton(i){
   const st = data.state;
   if (st.current_key === i.key) return `<button disabled>Comprobando…</button>`;
   if (st.queue.includes(i.key)) return `<button disabled>En cola…</button>`;
+  if (i.status === "acted") return "";
   return `<button data-k="${esc(i.key)}">${i.status === "done" ? "Volver a comprobar" : "Comprobar ahora"}</button>`;
 }
+function actionButtons(i){
+  if (i.status !== "done" || data.state.current_key === i.key) return "";
+  const r = i.result || {}; const v = i.verdict; const k = esc(i.key);
+  const out = [];
+  if (v === "fixable" && r.ffsubsync && r.alass)
+    out.push(`<button class="fix" data-act="fix" data-key="${k}">Aplicar ${sec((r.ffsubsync.median + r.alass.median) / 2)}</button>`);
+  if (["other_cut","disagree","fixable","ok","error"].includes(v) && i.sub_path)
+    out.push(`<button class="warn" data-act="replace" data-key="${k}" data-title="${esc(i.title)}">Descartar y buscar otro</button>`);
+  if (v === "gone")
+    out.push(`<button data-act="search" data-key="${k}">Buscar sub</button>`);
+  return out.join("");
+}
+async function act(b){
+  const what = b.dataset.act;
+  if (what === "replace" && !confirm(`"${b.dataset.title}": Bazarr borrará este subtítulo, lo meterá en su lista negra y buscará otro. ¿Seguro?`)) return;
+  b.disabled = true; b.textContent = "Enviando…";
+  const res = await fetch(`api/action?do=${what}&key=${encodeURIComponent(b.dataset.key)}`, {method: "POST"}).then(r => r.json()).catch(() => ({ok: false, message: "sin respuesta"}));
+  if (!res.ok) alert("No se pudo: " + res.message);
+  await load(); pollLog();
+}
+// Ajustes
+const AUTO = {other_cut: "replace", disagree: "replace", fixable: "fix", gone: "search"};
+async function openSettings(){
+  const s = await fetch("api/settings").then(r => r.json());
+  const f = document.getElementById("setform");
+  f.k_movies.checked = s.kinds.includes("movies"); f.k_episodes.checked = s.kinds.includes("episodes");
+  f.active_hours.value = s.active_hours || ""; f.control_samples.value = s.control_samples; f.max_attempts.value = s.max_attempts;
+  for (const v of Object.keys(AUTO)) f["a_" + v].checked = !!s.auto_actions[v];
+  document.getElementById("setmsg").textContent = "";
+  document.getElementById("settings").showModal();
+}
+async function saveSettings(ev){
+  ev.preventDefault();
+  const f = document.getElementById("setform");
+  const body = {
+    kinds: [f.k_movies.checked && "movies", f.k_episodes.checked && "episodes"].filter(Boolean),
+    active_hours: f.active_hours.value.trim(), control_samples: +f.control_samples.value, max_attempts: +f.max_attempts.value,
+    auto_actions: Object.fromEntries(Object.entries(AUTO).filter(([v]) => f["a_" + v].checked)),
+  };
+  const res = await fetch("api/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
+  if (!res.ok) { document.getElementById("setmsg").textContent = res.message; return; }
+  document.getElementById("settings").close();
+  refreshAutoBadge(); await load(); pollLog();
+}
+async function refreshAutoBadge(){
+  const s = await fetch("api/settings").then(r => r.json()).catch(() => null);
+  if (!s) return;
+  const n = Object.keys(s.auto_actions).length;
+  const el = document.getElementById("autobadge");
+  el.textContent = n ? `Acciones automáticas: ${n} activas` : "Acciones automáticas: no";
+  el.className = "auto" + (n ? " on" : "");
+}
+document.getElementById("openset").onclick = openSettings;
+document.getElementById("saveset").onclick = saveSettings;
+refreshAutoBadge();
 // Registro
 let logAfter = 0, logBusy = false;
 async function pollLog(){
@@ -204,6 +296,8 @@ def make_handler(cfg, store, worker):
                     after = 0
                 self._send(200, json.dumps({"lines": BUFFER.since(after)}, ensure_ascii=False),
                            "application/json; charset=utf-8")
+            elif path == "/api/settings":
+                self._send(200, json.dumps(cfg.editable(), ensure_ascii=False), "application/json; charset=utf-8")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             else:
@@ -226,6 +320,24 @@ def make_handler(cfg, store, worker):
                 for item in store.all():
                     if item["verdict"] == "error":
                         worker.request_one(item["key"])
+            elif url.path == "/api/action":
+                q = urllib.parse.parse_qs(url.query)
+                ok, msg = worker.perform(q.get("key", [""])[0], q.get("do", [""])[0])
+                return self._send(200 if ok else 409, json.dumps({"ok": ok, "message": msg}, ensure_ascii=False),
+                                  "application/json; charset=utf-8")
+            elif url.path == "/api/settings":
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                    values = json.loads(self.rfile.read(length) or b"{}")
+                    clean = cfg.apply(values)
+                except Exception as e:  # noqa: BLE001
+                    return self._send(400, json.dumps({"ok": False, "message": str(e)}, ensure_ascii=False),
+                                      "application/json; charset=utf-8")
+                store.save_settings(clean)
+                log.info("Ajustes guardados: %s", ", ".join(f"{k}={v}" for k, v in clean.items()))
+                worker.request_scan()
+                return self._send(200, json.dumps({"ok": True, "settings": cfg.editable()}, ensure_ascii=False),
+                                  "application/json; charset=utf-8")
             else:
                 return self._send(404, "not found", "text/plain")
             self._send(204, "", "text/plain")
