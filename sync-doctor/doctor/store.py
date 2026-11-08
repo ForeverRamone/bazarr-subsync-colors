@@ -49,6 +49,7 @@ NEW_COLUMNS = {
     "source": "TEXT DEFAULT 'history'",  # history | disk (sub sin sincronización en el historial)
     "manual_ok": "INTEGER DEFAULT 0",     # marcado como bien a mano
     "prev_verdict": "TEXT",               # veredicto antes de marcarlo (para deshacer)
+    "applied_shift": "REAL",              # desplazamiento aplicado por "Aplicar" (para deshacerlo)
 }
 
 # Orden de la cola: rojos, amarillos, los del disco (sin datos) y por último los verdes.
@@ -105,6 +106,10 @@ class Store:
                                 (item["sync_ts"], item["provider"], item["subs_id"], item["key"]))
                 return 1
         return 0
+
+    def set_applied_shift(self, key, value):
+        with self.lock, self.db:
+            self.db.execute("UPDATE items SET applied_shift = ? WHERE key = ?", (value, key))
 
     def set_sync_ts(self, key, value):
         with self.lock, self.db:

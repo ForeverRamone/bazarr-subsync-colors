@@ -79,6 +79,8 @@ col.c-off{width:96px}col.c-ver{width:150px}col.c-eng{width:210px}col.c-act{width
 .when{display:block;font-size:12px;color:var(--mut);margin-top:3px}
 .eng{display:grid;grid-template-columns:62px auto;gap:0 6px;font-size:12px;line-height:1.6}
 .eng span{color:var(--mut)}.eng b{font-weight:600;font-variant-numeric:tabular-nums}
+.eng.hasref>span:first-child,.eng.hasref>b:nth-of-type(1){color:var(--fix)}
+.eng.hasref>b:nth-of-type(n+2){font-weight:400;color:var(--mut)}
 .eng i{grid-column:2;font-style:normal;color:var(--mut);margin-top:-3px}
 .acts{display:flex;flex-direction:column;gap:5px}
 .acts button{padding:5px 10px;font-size:13px;width:100%;text-align:center}
@@ -176,7 +178,7 @@ dialog.pick{width:min(860px,calc(100vw - 32px))}
   <thead><tr><th>Título</th><th>Bazarr</th><th>Veredicto</th><th>Comprobación</th><th>Acciones</th></tr></thead>
   <tbody id="rows"></tbody>
 </table></div>
-<p class="help">"Comprobación": cuánto moverían ffsubsync y alass el subtítulo actual. Cerca de 0 = ya está bien. "Tramos" &gt; 1 = alass tuvo que cortarlo en partes (escenas que no coinciden).</p>
+<p class="help">"Comprobación": cuánto habría que mover el subtítulo actual. Cerca de 0 = ya está bien. Si el vídeo trae un subtítulo interno de texto ("sub eng"…), manda esa comparación; ffsubsync y alass escuchan el audio y quedan de apoyo. "Tramos" &gt; 1 = hubo que cortarlo en partes (escenas que no coinciden). ⚠ = corrección que solo dice el audio.</p>
 
 <details class="log" id="logbox" open><summary>Registro</summary><pre id="log"></pre></details>
 <div id="toast" role="status"></div>
@@ -203,10 +205,10 @@ dialog.pick{width:min(860px,calc(100vw - 32px))}
   <fieldset><legend>Acciones automáticas después de comprobar</legend>
     <label><input type="checkbox" name="a_other_cut"> <span><b>Otra versión</b> → descartar y buscar otro</span></label>
     <label><input type="checkbox" name="a_disagree"> <span><b>Dudoso</b> → descartar y buscar otro</span></label>
-    <label><input type="checkbox" name="a_fixable"> <span><b>Corregible</b> → aplicar la corrección</span></label>
+    <label><input type="checkbox" name="a_fixable"> <span><b>Corregible</b> → aplicar la corrección (solo si la confirma el sub interno del vídeo)</span></label>
     <label><input type="checkbox" name="a_gone"> <span><b>Ya no está</b> → pedir a Bazarr que busque</span></label>
     <label>Máximo de acciones por título e idioma <input type="number" name="max_attempts" min="1" max="10"></label>
-    <p class="hint">"Descartar" = Bazarr borra el sub, lo mete en su lista negra y descarga el siguiente mejor. El sub nuevo se comprueba en cuanto Bazarr lo tiene.</p>
+    <p class="hint">"Descartar" = Bazarr borra el sub, lo mete en su lista negra y descarga el siguiente mejor. El sub nuevo se comprueba en cuanto Bazarr lo tiene. Los subs "del disco" nunca se tocan en automático.</p>
   </fieldset>
   <p id="setmsg"></p>
   <div class="row"><button value="cancel" formnovalidate>Cancelar</button><button id="saveset" class="primary" value="default">Guardar</button></div>
@@ -376,20 +378,23 @@ function row(i){
       ? `<span class="lv lv-unknown" title="Sin sincronización en el historial de Bazarr"></span><span class="muted">sin datos</span>`
       : `<span class="lv lv-${esc(i.level)}" title="Color en Bazarr"></span>${sec(i.bazarr_offset)}`}</td>
     <td class="ver"><span class="pill v-${esc(v)}" title="${esc(i.manual_ok ? "Marcado como bien a mano (antes: " + (SHORT[i.prev_verdict] || "?") + ")" : v==="pending"?"Aún sin comprobar":LABELS[v])}">${i.manual_ok ? "Bien ✓ a mano" : (SHORT[v] || v)}</span>
-      <span class="when">${ago(i.checked_at)}</span></td>
+      <span class="when">${r.reference ? "según sub interno · " : (r.ffsubsync || r.alass) ? "solo audio · " : ""}${ago(i.checked_at)}</span></td>
     <td class="engc">${engines(r)}</td>
     <td class="actc"><div class="acts">${actionButtons(i)}${checkButton(i)}</div></td>
   </tr>`;
 }
 function engines(r){
-  if (!r.ffsubsync && !r.alass) return `<span class="muted">–</span>`;
-  const one = (name, e) => {
-    if (!e) return `<span>${name}</span><b class="muted">falló</b>`;
-    let s = `<span>${name}</span><b>${sec(e.median)}</b>`;
+  if (!r.ffsubsync && !r.alass && !r.reference) return `<span class="muted">–</span>`;
+  const one = (name, e, title) => {
+    const label = `<span${title ? ` title="${esc(title)}"` : ""}>${name}</span>`;
+    if (!e) return `${label}<b class="muted">falló</b>`;
+    let s = `${label}<b>${sec(e.median)}</b>`;
     if (e.segments > 1) s += `<i>${e.segments} tramos · ${Math.round(e.split_fraction*100)}% fuera</i>`;
     return s;
   };
-  return `<div class="eng">${one("ffsubsync", r.ffsubsync)}${one("alass", r.alass)}</div>`;
+  const ref = r.reference
+    ? one(`sub ${r.reference.language}`, r.reference, "Subtítulo interno del vídeo: es la referencia principal") : "";
+  return `<div class="eng${r.reference ? " hasref" : ""}">${ref}${one("ffsubsync", r.ffsubsync)}${one("alass", r.alass)}</div>`;
 }
 function checkButton(i){
   const st = data.state;
@@ -401,8 +406,14 @@ function checkButton(i){
 function actionButtons(i){
   if (i.status !== "done" || data.state.current_key === i.key) return "";
   const r = i.result || {}, v = i.verdict, k = esc(i.key), out = [];
-  if (v === "fixable" && r.ffsubsync && r.alass)
-    out.push(`<button class="fixb" data-act="fix" data-key="${k}" title="Bazarr desplaza el sub y se vuelve a comprobar">Aplicar ${sec((r.ffsubsync.median + r.alass.median) / 2)}</button>`);
+  if (v === "fixable" && (r.fix_shift != null || (r.ffsubsync && r.alass))) {
+    const shift = r.fix_shift != null ? r.fix_shift : (r.ffsubsync.median + r.alass.median) / 2;
+    const why = r.fix_source === "reference" ? "según el sub interno del vídeo (fiable)"
+                                             : "solo según el audio: compruébalo antes, puede equivocarse";
+    out.push(`<button class="fixb" data-act="fix" data-key="${k}" title="Bazarr desplaza el sub ${esc(why)}. Se puede deshacer.">Aplicar ${sec(shift)}${r.fix_source === "reference" ? "" : " ⚠"}</button>`);
+  }
+  if (i.applied_shift)
+    out.push(`<button data-act="undo_fix" data-key="${k}" title="Bazarr lo desplaza ${esc(sec(-i.applied_shift))} para dejarlo como estaba">Deshacer corrección</button>`);
   if (["other_cut","disagree","fixable","ok","error"].includes(v) && i.sub_path)
     out.push(`<button class="warn" data-act="replace" data-key="${k}" data-title="${esc(i.title)}" title="Bazarr lo borra, lo mete en su lista negra y descarga otro">Descartar y buscar</button>`);
   if (v === "gone")
@@ -417,11 +428,12 @@ function actionButtons(i){
 }
 async function act(b){
   const what = b.dataset.act;
+  if (what === "undo_fix" && !confirm("Bazarr devolverá el subtítulo a como estaba antes de la corrección. ¿Seguro?")) return;
   if (what === "replace" && !confirm(`"${b.dataset.title}": Bazarr borrará este subtítulo, lo meterá en su lista negra y buscará otro. ¿Seguro?`)) return;
   b.disabled = true; b.textContent = "Enviando…";
   const res = await fetch(`api/action?do=${what}&key=${encodeURIComponent(b.dataset.key)}`, {method:"POST"})
     .then(r => r.json()).catch(() => ({ok:false, message:"sin respuesta"}));
-  toast(res.ok ? (what.endsWith("mark_ok") ? res.message : "Enviado a Bazarr") : "No se pudo: " + res.message);
+  toast(res.ok ? (what.endsWith("mark_ok") ? res.message : what === "undo_fix" ? "Corrección deshecha" : "Enviado a Bazarr") : "No se pudo: " + res.message);
   await load(); pollLog();
 }
 

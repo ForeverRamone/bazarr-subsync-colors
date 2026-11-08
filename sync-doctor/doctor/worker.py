@@ -236,6 +236,8 @@ class Worker:
             acts.append("replace")
         if v == "gone":
             acts.append("search")
+        if item.get("applied_shift") and item.get("sub_path"):
+            acts.append("undo_fix")
         # Marca manual: solo cambia el informe, no toca Bazarr.
         if item.get("manual_ok"):
             acts.append("unmark_ok")
@@ -275,13 +277,28 @@ class Worker:
         try:
             if action == "fix":
                 r = item_result(item)
-                secs = (r["ffsubsync"]["median"] + r["alass"]["median"]) / 2
+                secs = r.get("fix_shift")
+                if secs is None:  # resultados antiguos, sin "fix_shift"
+                    secs = (r["ffsubsync"]["median"] + r["alass"]["median"]) / 2
+                src = "según el sub interno" if r.get("fix_source") == "reference" else "según el audio"
                 self.bazarr.shift_subtitle(item["kind"], item["media_id"], code2, forced, hi, sub_bazarr, secs)
                 n = self.store.add_attempt(mkey)
-                note = f"Corregido {secs:+.2f} s en Bazarr ({n}/{self.cfg.max_attempts}); comprobando de nuevo."
+                self.store.set_applied_shift(key, (item.get("applied_shift") or 0) + secs)
+                note = (f"Corregido {secs:+.2f} s en Bazarr ({src}, {n}/{self.cfg.max_attempts}); "
+                        f"comprobando de nuevo. Si queda mal, usa \"Deshacer corrección\".")
                 self.store.save_action(key, "fix", note)
-                log.info("%s: %s desplazado %+.2f s", who, item["title"], secs)
+                log.info("%s: %s desplazado %+.2f s (%s)", who, item["title"], secs, src)
                 self.request_one(key)  # se vuelve a comprobar el mismo archivo
+                return True, note
+
+            if action == "undo_fix":
+                total = item.get("applied_shift") or 0
+                self.bazarr.shift_subtitle(item["kind"], item["media_id"], code2, forced, hi, sub_bazarr, -total)
+                self.store.set_applied_shift(key, None)
+                note = f"Corrección deshecha: desplazado {-total:+.2f} s para dejarlo como estaba."
+                self.store.save_action(key, "undo_fix", note)
+                log.info("%s: %s — %s", who, item["title"], note)
+                self.request_one(key)
                 return True, note
 
             if action == "replace":
@@ -363,10 +380,23 @@ class Worker:
         return True, note
 
     def _auto_action(self, item):
-        verdict = self.store.get(item["key"])["verdict"]
-        action = self.cfg.auto_actions.get(verdict)
-        if action:
-            self.perform(item["key"], action, auto=True)
+        current = self.store.get(item["key"])
+        action = self.cfg.auto_actions.get(current["verdict"])
+        if not action:
+            return
+        # Protecciones (caso Hope: ffsubsync y alass se equivocaron igual con el audio):
+        # 1) Los subs "del disco" pueden ser subs puestos a mano: nada automático.
+        if current.get("source") == "disk":
+            self.store.set_action_note(item["key"], "Sub del disco: no se toca en automático; decide tú.")
+            log.info("Sin acción automática en %s: es un sub del disco (solo a mano)", current["title"])
+            return
+        # 2) Corregir solo si lo confirma el sub interno del vídeo, no solo el audio.
+        if action == "fix" and item_result(current).get("fix_source") != "reference":
+            self.store.set_action_note(item["key"], "Corregible solo según el audio: no se corrige solo; decide tú.")
+            log.info("Sin corrección automática en %s: solo lo dice el audio (no hay sub interno que lo confirme)",
+                     current["title"])
+            return
+        self.perform(item["key"], action, auto=True)
 
     # ------------------------------------------------------------ comprobación
     def resolve_paths(self, item):
@@ -410,7 +440,7 @@ class Worker:
                 log.info("Resultado %s: el subtítulo ya no está en disco", item["title"])
                 self._auto_action(item)
                 return
-            result = verify(self.cfg, video, sub)
+            result = verify(self.cfg, video, sub, sub_lang=item["language"].split(":")[0])
             self.store.save_result(item["key"], result["verdict"], video, sub, result, note)
             if item.get("source") == "disk":
                 # Fecha del archivo tal como se comprobó (p. ej. tras corregirlo), para no repetir.

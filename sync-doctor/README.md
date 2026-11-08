@@ -9,13 +9,14 @@ Sync Doctor no toca tus archivos: monta la carpeta de vídeo en solo lectura. Lo
 Para cada subtítulo amarillo o rojo (offset de Bazarr > 1 s), y para unos cuantos verdes como grupo de control:
 
 1. Busca en Bazarr el vídeo y el subtítulo **actuales** (si la película se renombró o se actualizó después, usa el sub que hay ahora).
-2. Extrae el audio una vez y pasa dos programas independientes sobre una copia del subtítulo: **ffsubsync** (el mismo que usa Bazarr) y **alass** (otro método, capaz de detectar montajes distintos).
-3. Mide cuánto movería cada uno el subtítulo:
+2. **Si el vídeo trae un subtítulo interno de texto** (por ejemplo el inglés de los WEB-DL; los de imagen, como PGS, no sirven), lo extrae y compara con alass **sub contra sub**. Da igual que esté en otro idioma: se comparan los tiempos, no el texto. Esta comparación **manda**: el sub interno viene con el vídeo y casi siempre está bien.
+3. Además extrae el audio (en la misma pasada) y pasa **ffsubsync** (el mismo que usa Bazarr) y **alass** sobre una copia del subtítulo. Si no hay sub interno, son la única opinión.
+4. Mide cuánto habría que mover el subtítulo:
 
 | Veredicto | Significa | Acción disponible |
 |---|---|---|
-| **Bien** | Los dos lo dejan donde está (menos de 0,5 s). Bazarr acertó aunque el offset fuera grande. | — |
-| **Corregible** | Los dos coinciden en moverlo lo mismo. | **Aplicar ±X s** |
+| **Bien** | No hay que moverlo (menos de 0,5 s). Bazarr acertó aunque el offset fuera grande. | — |
+| **Corregible** | Hay que moverlo lo mismo en toda la película (según el sub interno; o, si no lo hay, según ffsubsync y alass a la vez, marcado con ⚠). | **Aplicar ±X s** |
 | **Otra versión** | alass tuvo que trocear el sub: probablemente es de otro montaje. | **Descartar y buscar otro** |
 | **Dudoso** | Los programas no se ponen de acuerdo. | **Descartar y buscar otro** |
 | **Ya no está** | Ese sub se borró o el vídeo cambió después. | **Buscar sub** |
@@ -32,13 +33,22 @@ Se comprueban todos una vez (y otra si el archivo cambia), después de los rojos
 
 | Botón | Qué hace Bazarr |
 |---|---|
-| **Aplicar ±X s** | Desplaza el sub con su herramienta "ajustar tiempos" (la media de lo que dicen ffsubsync y alass). Después Sync Doctor lo vuelve a comprobar. |
+| **Aplicar ±X s** | Desplaza el sub con su herramienta "ajustar tiempos" (lo que dice el sub interno; si no hay, la media de ffsubsync y alass, con ⚠). Después Sync Doctor lo vuelve a comprobar. |
+| **Deshacer corrección** | Aparece tras "Aplicar": Bazarr desplaza el sub lo contrario y lo deja como estaba. |
 | **Descartar y buscar otro** | Borra el sub, lo mete en su **lista negra** y descarga el siguiente mejor (que sincroniza como siempre). Si el sub no tiene proveedor (subido a mano), solo lo borra y pide otro: podría volver a elegir el mismo. |
 | **Buscar sub** | Busca y descarga el mejor sub de ese idioma. |
 | **Elegir otro…** | Abre la búsqueda manual de Bazarr: lista los candidatos de tus proveedores en ese idioma (puntuación, proveedor, versión, HI) y descarga el que elijas, que sustituye al actual. Bazarr lo sincroniza y Sync Doctor lo comprueba en cuanto lo tiene. La búsqueda puede tardar hasta un minuto. |
 | **Marcar como bien** | No toca Bazarr: si lo has comprobado tú y está bien, deja de salir como problema ("Bien ✓ a mano") y las acciones automáticas no lo tocan. **Quitar marca** lo deshace. Si se vuelve a comprobar (o el sub cambia), manda la comprobación nueva. |
 
 Tras descartar o buscar, Sync Doctor mira el historial de Bazarr cada minuto durante 30 minutos. En cuanto aparece el sub nuevo, **lo comprueba al momento**, a cualquier hora. Si Bazarr no encuentra nada, la fila lo indica para que lo revises a mano.
+
+### Protecciones de las acciones automáticas
+
+Con el audio, ffsubsync y alass pueden equivocarse **los dos a la vez y en lo mismo** (pasó con *Hope*: ambos dijeron −15 s y el sub estaba bien; el sub interno lo demostró). Por eso:
+
+- **Corregir en automático solo si lo confirma el sub interno del vídeo.** Si solo lo dice el audio, se queda en "Corregible ⚠" y decides tú.
+- **Los subs "del disco"** (sin sincronización en el historial, que pueden ser subs puestos a mano) **nunca se tocan en automático**; solo con tus botones.
+- Toda corrección se puede **deshacer** con un clic.
 
 **Freno:** como máximo 3 acciones automáticas por título e idioma (configurable). Así no vacía todos los proveedores con una película que no tiene buenos subs. Cuando un sub queda **Bien**, el contador vuelve a cero.
 

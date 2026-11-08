@@ -4,6 +4,7 @@ No modifica nada: se extrae el audio una vez, se pasan ffsubsync y alass sobre
 una copia del subtítulo y se mide cuánto lo moverían. Si los dos dicen que no
 hay que moverlo, Bazarr acertó.
 """
+import json
 import logging
 import os
 import re
@@ -125,10 +126,52 @@ def _run(cmd, timeout, env=None):
     return time.monotonic() - t0
 
 
-def extract_audio(cfg, video, wav, audio_index=0):
+def extract_audio(cfg, video, wav, audio_index=0, ref_stream=None, ref_srt=None):
+    """Extrae el audio y, si se indica, también un subtítulo interno (en la misma pasada)."""
     cmd = [cfg.ffmpeg, "-nostdin", "-y", "-v", "error", "-i", video, "-map", f"0:a:{audio_index}",
            "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]
+    if ref_stream is not None and ref_srt:
+        cmd += ["-map", f"0:{ref_stream}", "-c:s", "srt", ref_srt]
     return _run(cmd, cfg.engine_timeout)
+
+
+# Subtítulos internos que sirven de referencia (de texto; los de imagen, como PGS, no).
+TEXT_SUB_CODECS = {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"}
+LANG3 = {"es": ("spa", "esl"), "en": ("eng",), "fr": ("fre", "fra"), "de": ("ger", "deu"), "it": ("ita",),
+         "pt": ("por",), "ca": ("cat",)}
+
+
+def find_text_sub(cfg, video, sub_lang=""):
+    """El mejor subtítulo interno de texto (no forzado) para usar de referencia, o None.
+
+    Prioridad: mismo idioma que el sub comprobado, luego inglés, luego cualquiera.
+    """
+    ffmpeg = shutil.which(cfg.ffmpeg)
+    probe = (shutil.which("ffprobe", path=os.path.dirname(ffmpeg)) if ffmpeg else None) or shutil.which("ffprobe")
+    if not probe:
+        return None
+    try:
+        out = subprocess.run([probe, "-v", "error", "-select_streams", "s", "-show_entries",
+                              "stream=index,codec_name:stream_tags=language,title:stream_disposition=forced",
+                              "-of", "json", video], capture_output=True, text=True, timeout=180)
+        streams = json.loads(out.stdout or "{}").get("streams", [])
+    except Exception as e:  # noqa: BLE001
+        log.warning("  No se pudieron leer las pistas del vídeo: %s", e)
+        return None
+    want = LANG3.get(sub_lang, ())
+    best, best_rank = None, 9
+    for s in streams:
+        tags = s.get("tags") or {}
+        title = (tags.get("title") or "").lower()
+        if s.get("codec_name") not in TEXT_SUB_CODECS:
+            continue
+        if (s.get("disposition") or {}).get("forced") or "forced" in title or "forzad" in title:
+            continue
+        lang = (tags.get("language") or "").lower()
+        rank = 0 if lang in want else 1 if lang == "eng" else 2
+        if rank < best_rank:
+            best, best_rank = {"index": s["index"], "language": lang or "?", "codec": s.get("codec_name")}, rank
+    return best
 
 
 def run_ffsubsync(cfg, reference, srt_in, srt_out):
@@ -156,7 +199,7 @@ def run_alass(cfg, reference, srt_in, srt_out):
 # ---------------------------------------------------------------------------
 VERDICTS = {
     "ok": "Bien: los dos programas lo dejan donde está",
-    "fixable": "Corregible: los dos coinciden en moverlo",
+    "fixable": "Corregible: hay que moverlo lo mismo en toda la película",
     "other_cut": "Probablemente de otra versión o montaje",
     "disagree": "Dudoso: los programas no se ponen de acuerdo",
     "gone": "El subtítulo de esa sincronización ya no está",
@@ -183,9 +226,24 @@ def decide(ff, al, cfg):
     return "disagree"
 
 
-def verify(cfg, video_path, sub_path, audio_index=0):
-    """Devuelve dict con verdict, ffsubsync, alass, timings y error (si lo hay)."""
-    result = {"verdict": "error", "ffsubsync": None, "alass": None, "timings": {}, "error": None}
+def decide_reference(ref, cfg):
+    """Veredicto usando el subtítulo interno del vídeo (referencia de confianza)."""
+    if ref["split_fraction"] >= cfg.split_threshold:
+        return "other_cut"
+    if abs(ref["median"]) <= cfg.ok_tolerance:
+        return "ok"
+    return "fixable"
+
+
+def verify(cfg, video_path, sub_path, audio_index=0, sub_lang=""):
+    """Devuelve dict con verdict, reference, ffsubsync, alass, fix_source, fix_shift, timings y error.
+
+    Si el vídeo trae un subtítulo interno de texto, se usa como referencia principal
+    (alass compara sub contra sub: no depende del idioma, solo de los tiempos).
+    ffsubsync y alass contra el audio quedan como apoyo, o como única opinión si no hay sub interno.
+    """
+    result = {"verdict": "error", "reference": None, "ffsubsync": None, "alass": None,
+              "fix_source": None, "fix_shift": None, "timings": {}, "error": None}
     if not sub_path.lower().endswith(".srt"):
         result["verdict"] = "unsupported"
         result["error"] = "Solo se comprueban subtítulos .srt"
@@ -199,18 +257,48 @@ def verify(cfg, video_path, sub_path, audio_index=0):
         sub_copy = os.path.join(tmp, "in.srt")
         shutil.copyfile(sub_path, sub_copy)
         wav = os.path.join(tmp, "audio.wav")
-        log.info("  Extrayendo audio de %s…", os.path.basename(video_path))
+        ref_info = find_text_sub(cfg, video_path, sub_lang)
+        ref_srt = os.path.join(tmp, "ref.srt") if ref_info else None
+        if ref_info:
+            log.info("  Extrayendo audio y sub interno (%s) de %s…", ref_info["language"], os.path.basename(video_path))
+        else:
+            log.info("  Extrayendo audio de %s (sin sub interno de texto)…", os.path.basename(video_path))
         try:
-            result["timings"]["audio"] = round(extract_audio(cfg, video_path, wav, audio_index), 1)
+            result["timings"]["audio"] = round(extract_audio(cfg, video_path, wav, audio_index,
+                                                             ref_info and ref_info["index"], ref_srt), 1)
         except Cancelled:
             raise
         except Exception as e:  # noqa: BLE001
-            result["error"] = f"Extrayendo audio: {e}"
-            log.warning("  No se pudo extraer el audio: %s", e)
-            return result
-        log.info("  Audio listo en %.0f s", result["timings"]["audio"])
+            if not ref_info:
+                result["error"] = f"Extrayendo audio: {e}"
+                log.warning("  No se pudo extraer el audio: %s", e)
+                return result
+            # Por si falla el sub interno: se reintenta solo con el audio.
+            log.warning("  No se pudo extraer el sub interno (%s); sigo solo con el audio", e)
+            ref_info = ref_srt = None
+            try:
+                result["timings"]["audio"] = round(extract_audio(cfg, video_path, wav, audio_index), 1)
+            except Cancelled:
+                raise
+            except Exception as e2:  # noqa: BLE001
+                result["error"] = f"Extrayendo audio: {e2}"
+                return result
+        log.info("  Listo en %.0f s", result["timings"]["audio"])
 
         errors = []
+        if ref_info:
+            out = os.path.join(tmp, "ref_out.srt")
+            log.info("  Comparando con el sub interno (%s) usando alass…", ref_info["language"])
+            try:
+                result["timings"]["reference"] = round(run_alass(cfg, ref_srt, sub_copy, out), 1)
+                m = measure_shift(sub_copy, out)
+                result["reference"] = {**m, "language": ref_info["language"], "codec": ref_info["codec"]}
+                log.info("  Según el sub interno lo movería %+.2f s (%d tramo%s)", m["median"], m["segments"],
+                         "" if m["segments"] == 1 else "s")
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.warning("  La comparación con el sub interno falló: %s", e)
         for name, runner in (("ffsubsync", run_ffsubsync), ("alass", run_alass)):
             out = os.path.join(tmp, f"{name}.srt")
             log.info("  Ejecutando %s…", name)
@@ -226,7 +314,17 @@ def verify(cfg, video_path, sub_path, audio_index=0):
                 errors.append(f"{name}: {e}")
                 log.warning("  %s falló: %s", name, e)
 
-    result["verdict"] = decide(result["ffsubsync"], result["alass"], cfg)
-    if errors:
+    ff, al, ref = result["ffsubsync"], result["alass"], result["reference"]
+    if ref:
+        # El sub interno manda: viene con el vídeo y casi siempre está bien.
+        result["verdict"] = decide_reference(ref, cfg)
+        result["audio_verdict"] = decide(ff, al, cfg) if ff and al else None
+        if result["verdict"] == "fixable":
+            result["fix_source"], result["fix_shift"] = "reference", ref["median"]
+    else:
+        result["verdict"] = decide(ff, al, cfg)
+        if result["verdict"] == "fixable":
+            result["fix_source"], result["fix_shift"] = "audio", (ff["median"] + al["median"]) / 2
+    if errors and not ref:
         result["error"] = " / ".join(errors)
     return result
