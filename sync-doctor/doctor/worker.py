@@ -315,6 +315,53 @@ class Worker:
         self.request_scan(delay=45)
         return True, note
 
+    # ---------------------------------------------------- elegir otro sub a mano
+    def candidates(self, key):
+        """Candidatos de los proveedores para ese título, del mismo idioma, mejor puntuados primero."""
+        item = self.store.get(key)
+        if not item:
+            raise ValueError("No existe")
+        code2 = item["language"].split(":")[0]
+        log.info("Buscando candidatos en los proveedores para %s…", item["title"])
+        found = self.bazarr.search_candidates(item["kind"], item["media_id"])
+        out = []
+        for c in found:
+            if str(c.get("language") or "").split(":")[0] != code2:
+                continue
+            out.append({
+                "provider": c.get("provider"), "subtitle": c.get("subtitle"),
+                "score": c.get("score"), "hi": str(c.get("hearing_impaired")) == "True",
+                "forced": str(c.get("forced")) == "True", "release": c.get("release_info") or [],
+                "uploader": c.get("uploader"), "url": c.get("url"),
+                "matches": c.get("matches") or [], "dont_matches": c.get("dont_matches") or [],
+                "is_current": bool(item.get("provider") and c.get("provider") == item.get("provider")
+                                   and item.get("subs_id") and str(item.get("subs_id")) in str(c.get("url") or "")),
+            })
+        out.sort(key=lambda c: -(c["score"] or 0))
+        log.info("%d candidatos en %s para %s", len(out), code2, item["title"])
+        return {"title": item["title"], "language": item["language"], "candidates": out[:60]}
+
+    def choose(self, key, provider, subtitle, hi, forced, label=""):
+        """Descarga el candidato elegido; luego se vigila y se comprueba como tras un descarte."""
+        item = self.store.get(key)
+        if not item:
+            return False, "No existe"
+        mkey = media_key(item)
+        try:
+            self.bazarr.download_candidate(item["kind"], item["media_id"], item["series_id"],
+                                           provider, subtitle, hi, forced)
+        except Exception as e:  # noqa: BLE001
+            log.warning("No se pudo descargar el candidato para %s: %s", item["title"], e)
+            return False, str(e)
+        note = f"Elegido a mano: {provider}{(' — ' + label) if label else ''}. Esperando a que Bazarr lo descargue y sincronice…"
+        self.store.save_action(key, "choose", note, status="acted")
+        self.store.reset_attempts(mkey)
+        self.watch[mkey] = {"key": key, "title": item["title"], "note": note, "since": time.time(),
+                            "deadline": time.time() + WATCH_MINUTES * 60}
+        log.info("Acción: %s — %s", item["title"], note)
+        self.request_scan(delay=30)
+        return True, note
+
     def _auto_action(self, item):
         verdict = self.store.get(item["key"])["verdict"]
         action = self.cfg.auto_actions.get(verdict)

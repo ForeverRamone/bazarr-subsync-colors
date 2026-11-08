@@ -59,6 +59,22 @@ class Bazarr:
         self._request("PATCH", f"{kind}/subtitles", self._ids(kind, media_id, series_id) + [
             ("language", language), ("forced", str(forced)), ("hi", str(hi))])
 
+    def search_candidates(self, kind, media_id):
+        """Búsqueda manual en los proveedores (puede tardar: consulta todos)."""
+        param = "radarrid" if kind == "movies" else "episodeid"
+        saved, self.timeout = self.timeout, 240
+        try:
+            return self._get(f"providers/{kind}", {param: media_id}).get("data", []) or []
+        finally:
+            self.timeout = saved
+
+    def download_candidate(self, kind, media_id, series_id, provider, subtitle, hi, forced, original_format=False):
+        """Descarga el candidato elegido (Bazarr lo guarda y lo sincroniza como siempre)."""
+        ids = [("radarrid", media_id)] if kind == "movies" else [("seriesid", series_id), ("episodeid", media_id)]
+        self._request("POST", f"providers/{kind}", ids + [
+            ("hi", str(hi)), ("forced", str(forced)), ("original_format", str(original_format)),
+            ("provider", provider), ("subtitle", subtitle)])
+
     def shift_subtitle(self, kind, media_id, language, forced, hi, path, seconds):
         """Desplaza el sub con la herramienta "ajustar tiempos" de Bazarr."""
         ms_total = int(round(abs(seconds) * 1000))

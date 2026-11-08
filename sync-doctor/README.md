@@ -35,6 +35,7 @@ Se comprueban todos una vez (y otra si el archivo cambia), después de los rojos
 | **Aplicar ±X s** | Desplaza el sub con su herramienta "ajustar tiempos" (la media de lo que dicen ffsubsync y alass). Después Sync Doctor lo vuelve a comprobar. |
 | **Descartar y buscar otro** | Borra el sub, lo mete en su **lista negra** y descarga el siguiente mejor (que sincroniza como siempre). Si el sub no tiene proveedor (subido a mano), solo lo borra y pide otro: podría volver a elegir el mismo. |
 | **Buscar sub** | Busca y descarga el mejor sub de ese idioma. |
+| **Elegir otro…** | Abre la búsqueda manual de Bazarr: lista los candidatos de tus proveedores en ese idioma (puntuación, proveedor, versión, HI) y descarga el que elijas, que sustituye al actual. Bazarr lo sincroniza y Sync Doctor lo comprueba en cuanto lo tiene. La búsqueda puede tardar hasta un minuto. |
 | **Marcar como bien** | No toca Bazarr: si lo has comprobado tú y está bien, deja de salir como problema ("Bien ✓ a mano") y las acciones automáticas no lo tocan. **Quitar marca** lo deshace. Si se vuelve a comprobar (o el sub cambia), manda la comprobación nueva. |
 
 Tras descartar o buscar, Sync Doctor mira el historial de Bazarr cada minuto durante 30 minutos. En cuanto aparece el sub nuevo, **lo comprueba al momento**, a cualquier hora. Si Bazarr no encuentra nada, la fila lo indica para que lo revises a mano.
@@ -87,7 +88,6 @@ Las marcadas con ⚙ también se cambian desde Ajustes en la web (lo guardado al
 - Con la clave de la API, Sync Doctor puede pedir a Bazarr que **desplace, borre o ponga en lista negra** subtítulos, siempre por un botón tuyo o por las acciones automáticas que actives.
 - La web no tiene contraseña y quien la abra puede lanzar esas acciones: no abras el puerto 8687 fuera de tu red.
 
-## Próximas ideas
+## Enlaces
 
-- Elegir a mano otro sub entre los candidatos que ofrece Bazarr.
-- Que el userscript muestre el veredicto en el historial de Bazarr.
+`http://192.168.0.60:8687/?q=título` abre la web filtrada por ese título (lo usa el userscript al hacer clic en su etiqueta ⚕).

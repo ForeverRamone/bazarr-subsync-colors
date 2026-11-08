@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Bazarr – colores de sincronización
 // @namespace    fixforbazarr
-// @version      1.0.1
-// @description  Muestra el desplazamiento de cada sincronización en el historial de Bazarr, colorea las filas según lo grande que sea y añade un panel con los subtítulos a revisar.
+// @version      1.1.0
+// @description  Muestra el desplazamiento de cada sincronización en el historial de Bazarr, colorea las filas, añade un panel con los subtítulos a revisar y, si usas Sync Doctor, su veredicto.
 // @homepageURL  https://github.com/ForeverRamone/bazarr-subsync-colors
 // @updateURL    https://raw.githubusercontent.com/ForeverRamone/bazarr-subsync-colors/main/bazarr-subsync-colors.user.js
 // @downloadURL  https://raw.githubusercontent.com/ForeverRamone/bazarr-subsync-colors/main/bazarr-subsync-colors.user.js
@@ -23,11 +23,70 @@
     //                 |offset| >  10 s → rojo (casi seguro que va mal)
     // Si el factor de framerate no es 1.00, se marca como mínimo en amarillo.
     framerateCountsAsWarning: true,
+    // Dirección de Sync Doctor (vacío = no mostrar sus veredictos).
+    doctorUrl: "http://192.168.0.60:8687",
+    // Si Sync Doctor ya comprobó la fila, colorearla según su veredicto (no por el offset).
+    doctorColors: true,
   };
 
   const SYNC_RE =
     /offset of\s+(-?\d+(?:\.\d+)?)\s+seconds and a framerate scale factor of\s+(-?\d+(?:\.\d+)?)/i;
   const REPLACING_ACTIONS = new Set([0, 1, 2, 3, 4]); // borrado, descarga, manual, mejora, subida
+
+  // ---------------------------------------------------------------------------
+  // Sync Doctor: veredictos (se leen de su API cada minuto)
+  // ---------------------------------------------------------------------------
+  const DOCTOR = { map: new Map(), ok: false, error: null };
+  const DOCTOR_LABELS = {
+    ok: ["Bien", "green"], fixable: ["Corregible", "yellow"], other_cut: ["Otra versión", "red"],
+    disagree: ["Dudoso", "yellow"], gone: ["Ya no está", "gray"], error: ["Error", "gray"],
+    unsupported: ["No soportado", "gray"],
+  };
+
+  async function loadDoctor() {
+    if (!CONFIG.doctorUrl) return;
+    try {
+      const res = await fetch(CONFIG.doctorUrl.replace(/\/$/, "") + "/api/results");
+      const json = await res.json();
+      const map = new Map();
+      for (const it of json.items || []) map.set(it.key, it);
+      DOCTOR.map = map;
+      DOCTOR.ok = true;
+      DOCTOR.error = null;
+      scheduleDecorate();
+    } catch (e) {
+      DOCTOR.ok = false;
+      DOCTOR.error = String(e);
+    }
+  }
+
+  // Sync Doctor identifica cada sincronización por "ruta del sub|fecha".
+  function doctorFor(row) {
+    if (!row || !DOCTOR.map.size) return null;
+    const path = row.subtitlesPath || row.subtitles_path;
+    const ts = row.parsedTimestamp || row.parsed_timestamp;
+    return path && ts ? DOCTOR.map.get(`${path}|${ts}`) || null : null;
+  }
+
+  function doctorLabel(it) {
+    if (it.manual_ok) return ["Bien ✓ a mano", "green"];
+    if (it.status === "acted") return ["Acción en curso", "blue"];
+    if (!it.verdict) return ["Pendiente", "gray"];
+    return DOCTOR_LABELS[it.verdict] || [it.verdict, "gray"];
+  }
+
+  function doctorTooltip(it) {
+    const r = it.result || {};
+    const f = (e) => (e ? `${e.median > 0 ? "+" : ""}${e.median.toFixed(2)} s${e.segments > 1 ? ` (${e.segments} tramos)` : ""}` : "–");
+    let t = `Sync Doctor: ${doctorLabel(it)[0]}`;
+    if (r.ffsubsync || r.alass) t += ` · ffsubsync ${f(r.ffsubsync)} · alass ${f(r.alass)}`;
+    if (it.action_note) t += ` · ${it.action_note}`;
+    return t + " · clic para abrirlo en Sync Doctor";
+  }
+
+  function doctorLink(title) {
+    return CONFIG.doctorUrl.replace(/\/$/, "") + "/?q=" + encodeURIComponent(title || "");
+  }
 
   // ---------------------------------------------------------------------------
   // Utilidades
@@ -166,6 +225,19 @@
       font-variant-numeric: tabular-nums;
     }
 
+    a.sd-badge {
+      display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 10px; vertical-align: middle;
+      font-size: 11px; font-weight: 600; line-height: 18px; text-decoration: none; white-space: nowrap;
+      color: var(--sd-c); border: 1.5px solid var(--sd-c); background: transparent;
+    }
+    a.sd-badge::before { content: "⚕ "; }
+    a.sd-badge:hover { background: var(--sd-c); color: #fff; }
+    a.sd-badge[data-c="green"] { --sd-c: #2f9e44; } a.sd-badge[data-c="yellow"] { --sd-c: #e67700; }
+    a.sd-badge[data-c="red"] { --sd-c: #e03131; } a.sd-badge[data-c="gray"] { --sd-c: #868e96; }
+    a.sd-badge[data-c="blue"] { --sd-c: #1971c2; }
+    #subsync-panel .ss-doc { font-size: 11px; font-weight: 600; white-space: nowrap; margin-left: 6px; }
+    #subsync-panel .ss-doc[data-c="green"] { color: #51cf66; } #subsync-panel .ss-doc[data-c="yellow"] { color: #fcc419; }
+    #subsync-panel .ss-doc[data-c="red"] { color: #ff6b6b; } #subsync-panel .ss-doc[data-c="gray"], #subsync-panel .ss-doc[data-c="blue"] { color: #adb5bd; }
     #subsync-fab {
       position: fixed; right: 18px; bottom: 18px; z-index: 9999;
       border: 0; border-radius: 22px; padding: 9px 14px; cursor: pointer;
@@ -212,12 +284,20 @@
       const sync = data ? parseSync(data.description) : null;
       const infoTd = sync ? findInfoCell(tr) : null;
 
+      const doc = sync ? doctorFor(data) : null;
+      decorateDoctor(tr, data, doc);
+
       if (!sync) {
         if (tr.hasAttribute("data-subsync")) tr.removeAttribute("data-subsync");
         for (const td of tr.querySelectorAll("td[data-subsync-badge]")) td.removeAttribute("data-subsync-badge");
         continue;
       }
-      if (tr.getAttribute("data-subsync") !== sync.level) tr.setAttribute("data-subsync", sync.level);
+      let level = sync.level;
+      if (doc && CONFIG.doctorColors) {
+        const c = doctorLabel(doc)[1];
+        if (c === "green" || c === "yellow" || c === "red") level = c;
+      }
+      if (tr.getAttribute("data-subsync") !== level) tr.setAttribute("data-subsync", level);
       const text = badgeText(sync);
       for (const td of tr.querySelectorAll("td[data-subsync-badge]")) {
         if (td !== infoTd) td.removeAttribute("data-subsync-badge");
@@ -226,6 +306,40 @@
         infoTd.setAttribute("data-subsync-badge", text);
       }
     }
+  }
+
+  // Etiqueta de Sync Doctor junto al título (enlace a su web, filtrada por ese título).
+  function decorateDoctor(tr, data, doc) {
+    let a = tr.querySelector("a.sd-badge");
+    if (!doc) {
+      if (a) a.remove();
+      return;
+    }
+    const nameTd = findCell(tr, "name") || tr.children[1];
+    if (!nameTd) return;
+    const [label, color] = doctorLabel(doc);
+    if (!a || a.parentElement !== nameTd) {
+      if (a) a.remove();
+      a = document.createElement("a");
+      a.className = "sd-badge";
+      a.target = "_blank";
+      a.rel = "noopener";
+      nameTd.appendChild(a);
+    }
+    const href = doctorLink(doc.title || data.title);
+    if (a.textContent !== label) a.textContent = label;
+    if (a.dataset.c !== color) a.dataset.c = color;
+    if (a.getAttribute("href") !== href) a.setAttribute("href", href);
+    const tip = doctorTooltip(doc);
+    if (a.title !== tip) a.title = tip;
+  }
+
+  function findCell(tr, header) {
+    const table = tr.closest("table");
+    if (!table) return null;
+    const ths = [...table.querySelectorAll("thead th")];
+    const idx = ths.findIndex((th) => th.textContent.trim().toLowerCase() === header);
+    return idx >= 0 ? tr.children[idx] || null : null;
   }
 
   // La columna "Info" se localiza por su cabecera; si no, la celda con el icono de info.
@@ -323,8 +437,15 @@
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
     return `<div class="ss-item ${sync.level}">
         <a href="${esc(href)}">${esc(title)}<small>${esc(lang)} · ${esc(when)}</small></a>
-        <span class="ss-off">${esc(badgeText(sync))}</span>
+        <span class="ss-off">${esc(badgeText(sync))}</span>${doctorSpan(row)}
       </div>`;
+  }
+
+  function doctorSpan(row) {
+    const doc = doctorFor(row);
+    if (!doc) return "";
+    const [label, color] = doctorLabel(doc);
+    return `<span class="ss-doc" data-c="${color}" title="${doctorTooltip(doc).replace(/"/g, "&quot;")}">⚕ ${label}</span>`;
   }
 
   let panelItems = null;
@@ -410,6 +531,8 @@
     if (!window.Bazarr) return; // no es una página de Bazarr
     addStyles();
     buildPanel();
+    loadDoctor();
+    setInterval(loadDoctor, 60000);
     new MutationObserver(scheduleDecorate).observe(document.body, {
       childList: true,
       subtree: true,

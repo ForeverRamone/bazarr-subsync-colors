@@ -114,6 +114,18 @@ dialog .hint{font-size:12px;color:var(--mut);margin:4px 0 0}
 dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
 #setmsg{color:var(--err);font-size:13px;min-height:1.2em;margin:0}
 
+/* Elegir otro sub */
+dialog.pick{width:min(860px,calc(100vw - 32px))}
+.pick .body{max-height:min(60vh,560px);overflow:auto;border:1px solid var(--line);border-radius:8px}
+.pick table{table-layout:auto}
+.pick td,.pick th{padding:7px 10px;font-size:13px;vertical-align:middle}
+.pick .rel{max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.pick .score{font-weight:700;font-variant-numeric:tabular-nums}
+.pick .tag{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:0 6px;color:var(--mut);margin-left:4px}
+.pick .tag.cur{border-color:var(--fix);color:var(--fix)}
+.pick .loading{padding:28px;text-align:center;color:var(--mut)}
+@media (max-width:820px){.pick table,.pick tbody,.pick tr,.pick td{display:revert;width:auto}.pick thead{display:revert}.pick tr{display:table-row;padding:0}}
+
 /* Móvil: cada fila es una tarjeta */
 @media (max-width:820px){
   table,tbody,tr,td{display:block;width:100%}
@@ -168,6 +180,13 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
 
 <details class="log" id="logbox" open><summary>Registro</summary><pre id="log"></pre></details>
 <div id="toast" role="status"></div>
+
+<dialog id="pick" class="pick"><form method="dialog">
+  <h2 id="picktitle">Elegir otro subtítulo</h2>
+  <p class="hint" id="pickhint">Candidatos de tus proveedores en Bazarr, mejor puntuados primero. Al descargar uno, sustituye al actual, Bazarr lo sincroniza y Sync Doctor lo comprueba.</p>
+  <div class="body" id="pickbody"></div>
+  <div class="row"><button value="cancel">Cerrar</button></div>
+</form></dialog>
 
 <dialog id="settings"><form method="dialog" id="setform">
   <h2>Ajustes</h2>
@@ -309,6 +328,39 @@ function render(){
     post("api/run?key=" + encodeURIComponent(b.dataset.k), "Añadido a la cola: se comprueba enseguida");
   });
   document.querySelectorAll("button[data-act]").forEach(b => b.onclick = () => act(b));
+  document.querySelectorAll("button[data-pick]").forEach(b => b.onclick = () => openPick(b.dataset.pick, b.dataset.title));
+}
+
+// Elegir otro sub
+async function openPick(key, title){
+  $("picktitle").textContent = `Elegir otro subtítulo · ${title}`;
+  $("pickbody").innerHTML = `<div class="loading">Buscando en los proveedores… puede tardar hasta un minuto.</div>`;
+  $("pick").showModal();
+  const res = await fetch("api/candidates?key=" + encodeURIComponent(key), {method:"POST"})
+    .then(r => r.json()).catch(() => ({ok:false, message:"sin respuesta"}));
+  if (!res.ok) { $("pickbody").innerHTML = `<div class="loading">No se pudo buscar: ${esc(res.message)}</div>`; return; }
+  if (!res.candidates.length) { $("pickbody").innerHTML = `<div class="loading">Ningún proveedor tiene subtítulos en ${esc(res.language)} para este título.</div>`; return; }
+  $("pickbody").innerHTML = `<table><thead><tr><th>Puntos</th><th>Proveedor</th><th>Versión</th><th></th></tr></thead><tbody>` +
+    res.candidates.map((c, n) => {
+      const rel = c.release.length ? c.release[0] : "(sin nombre de versión)";
+      const tags = (c.hi ? `<span class="tag">HI</span>` : "") + (c.forced ? `<span class="tag">forzado</span>` : "") +
+                   (c.is_current ? `<span class="tag cur">el actual</span>` : "") +
+                   (c.release.length > 1 ? `<span class="tag" title="${esc(c.release.join(" | "))}">+${c.release.length - 1}</span>` : "");
+      const why = c.dont_matches.length ? `No coincide: ${c.dont_matches.join(", ")}` : "Coincide en todo";
+      return `<tr><td class="score" title="${esc(why)}">${c.score ?? "–"}%</td><td>${esc(c.provider)}${c.uploader ? `<div class="muted" style="font-size:11px">${esc(c.uploader)}</div>` : ""}</td>
+        <td><span class="rel" title="${esc(c.release.join(" | "))}">${esc(rel)}</span>${tags}</td>
+        <td><button data-c="${n}">Descargar</button></td></tr>`;
+    }).join("") + `</tbody></table>`;
+  $("pickbody").querySelectorAll("button[data-c]").forEach(b => b.onclick = async () => {
+    const c = res.candidates[+b.dataset.c];
+    b.disabled = true; b.textContent = "Enviando…";
+    const r = await fetch("api/choose", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({key, provider:c.provider, subtitle:c.subtitle, hi:c.hi, forced:c.forced, label:`${c.score}% · ${c.release[0] || ""}`})})
+      .then(x => x.json()).catch(() => ({ok:false, message:"sin respuesta"}));
+    toast(r.ok ? "Pedido a Bazarr: se comprobará en cuanto lo tenga" : "No se pudo: " + r.message);
+    if (r.ok) $("pick").close();
+    await load(); pollLog();
+  });
 }
 
 function row(i){
@@ -355,6 +407,8 @@ function actionButtons(i){
     out.push(`<button class="warn" data-act="replace" data-key="${k}" data-title="${esc(i.title)}" title="Bazarr lo borra, lo mete en su lista negra y descarga otro">Descartar y buscar</button>`);
   if (v === "gone")
     out.push(`<button data-act="search" data-key="${k}" title="Bazarr busca y descarga un sub de este idioma">Buscar sub</button>`);
+  if (["other_cut","disagree","fixable","ok","error","gone"].includes(v))
+    out.push(`<button data-pick="${k}" data-title="${esc(i.title)}" title="Ver los candidatos de los proveedores y elegir uno">Elegir otro…</button>`);
   if (i.manual_ok)
     out.push(`<button data-act="unmark_ok" data-key="${k}" title="Vuelve al veredicto anterior">Quitar marca</button>`);
   else if (["other_cut","disagree","fixable","error"].includes(v))
@@ -440,5 +494,7 @@ $("logbox").ontoggle = pollLog;
 $("openset").onclick = openSettings;
 $("saveset").onclick = saveSettings;
 refreshAutoBadge();
+const q0 = new URLSearchParams(location.search).get("q");
+if (q0) $("q").value = q0;
 (async function loop(){ await load(); await pollLog(); setTimeout(loop, busy() || (data && data.state.watching.length) ? 3000 : 15000); })();
 </script></body></html>

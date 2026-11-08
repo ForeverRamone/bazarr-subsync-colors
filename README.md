@@ -11,6 +11,7 @@ Userscript para Chrome que hace visible el desplazamiento (offset) que aplica Ba
   - 🟡 amarillo: |offset| ≤ 10 s, o el framerate se ha corregido (factor ≠ 1.00)
   - 🔴 rojo: |offset| > 10 s
 - **Botón "⏱ Syncs"** (abajo a la derecha, en cualquier página de Bazarr): abre un panel con los subtítulos a revisar en todo el historial, ordenados de peor a mejor y con enlace a la película o serie. Solo cuenta la última sincronización de cada archivo de subtítulos: si después se descargó otro sub en la misma ruta, la sincronización antigua no aparece.
+- **Veredicto de Sync Doctor** (si lo usas): junto al título de cada sincronización que Sync Doctor haya comprobado aparece su etiqueta (⚕ Bien, ⚕ Otra versión, ⚕ Dudoso…), y la fila se colorea según ese veredicto en vez de por el offset. Así, un rojo que Sync Doctor ha comprobado y está bien sale en verde. Al pasar el ratón ves qué dijeron ffsubsync y alass; al hacer clic se abre Sync Doctor filtrado por ese título. El panel "⏱ Syncs" también muestra el veredicto.
 
 ## Instalación (Chrome)
 
@@ -31,6 +32,8 @@ const CONFIG = {
   greenMax: 1,      // segundos
   yellowMax: 10,    // segundos
   framerateCountsAsWarning: true,
+  doctorUrl: "http://192.168.0.60:8687",  // Sync Doctor; vacío = no mostrar veredictos
+  doctorColors: true,                     // colorear por el veredicto de Sync Doctor
 };
 ```
 
@@ -39,7 +42,7 @@ Si Bazarr cambia de IP o de puerto, edita la línea `// @match http://192.168.0.
 ## Seguridad
 
 - El script no lleva claves ni contraseñas. Usa la clave de la API que Bazarr ya carga en tu página cuando has iniciado sesión y solo la envía a tu propio Bazarr.
-- No hace peticiones a ningún otro sitio ni usa librerías externas.
+- Solo hace peticiones a tu Bazarr y, si está configurado, a tu Sync Doctor (para leer sus veredictos). No usa librerías externas.
 - Con las actualizaciones automáticas, lo que se suba a este repositorio se ejecuta en tu página de Bazarr. Protege la cuenta de GitHub con verificación en dos pasos.
 
 ## Cómo funciona (por si algún día deja de funcionar)

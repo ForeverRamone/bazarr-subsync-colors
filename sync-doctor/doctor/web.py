@@ -79,6 +79,26 @@ def make_handler(cfg, store, worker):
                 ok, msg = worker.perform(q.get("key", [""])[0], q.get("do", [""])[0])
                 return self._send(200 if ok else 409, json.dumps({"ok": ok, "message": msg}, ensure_ascii=False),
                                   "application/json; charset=utf-8")
+            elif url.path == "/api/candidates":
+                key = urllib.parse.parse_qs(url.query).get("key", [""])[0]
+                try:
+                    body = worker.candidates(key)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Búsqueda de candidatos fallida: %s", e)
+                    return self._send(502, json.dumps({"ok": False, "message": str(e)}, ensure_ascii=False),
+                                      "application/json; charset=utf-8")
+                return self._send(200, json.dumps({"ok": True, **body}, ensure_ascii=False),
+                                  "application/json; charset=utf-8")
+            elif url.path == "/api/choose":
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                    b = json.loads(self.rfile.read(length) or b"{}")
+                    ok, msg = worker.choose(b["key"], b["provider"], b["subtitle"], bool(b.get("hi")),
+                                            bool(b.get("forced")), str(b.get("label") or "")[:120])
+                except (KeyError, ValueError) as e:
+                    ok, msg = False, f"Petición incompleta: {e}"
+                return self._send(200 if ok else 409, json.dumps({"ok": ok, "message": msg}, ensure_ascii=False),
+                                  "application/json; charset=utf-8")
             elif url.path == "/api/settings":
                 try:
                     length = int(self.headers.get("Content-Length") or 0)
