@@ -52,7 +52,10 @@ LEVEL_ORDER = {"red": 0, "yellow": 1, "green": 2}
 
 
 def media_key(item):
-    return f"{item['kind']}|{item['media_id']}|{item['language']}"
+    """Título + idioma, sin distinguir variantes (es, es:hi, es:forced): al descartar
+    un sub, Bazarr puede descargar el sustituto en otra variante del mismo idioma."""
+    code2 = (item.get("language") or "").split(":")[0]
+    return f"{item['kind']}|{item['media_id']}|{code2}"
 
 
 class Store:

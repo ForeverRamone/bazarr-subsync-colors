@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sync Doctor</title>
+<style>
+:root{
+  --bg:#f4f5f7;--card:#fff;--fg:#1b1d21;--mut:#6b7280;--line:#e4e6ea;--soft:#f0f1f4;
+  --ok:#2b8a3e;--fix:#1971c2;--cut:#d9480f;--dis:#e67700;--gone:#868e96;--err:#c92a2a;
+  --red:#e03131;--yellow:#f08c00;--green:#2f9e44;
+  --radius:10px;--shadow:0 1px 2px rgba(16,24,40,.06)
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#111214;--card:#1b1c1f;--fg:#e8eaed;--mut:#9aa0a6;--line:#2c2e33;--soft:#232428;
+  --ok:#51cf66;--fix:#4dabf7;--cut:#ff8a4c;--dis:#fcc419;--gone:#adb5bd;--err:#ff6b6b;--shadow:none}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:20px 16px 40px}
+a{color:inherit}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+button:hover:not(:disabled){background:var(--soft)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+button.primary:hover:not(:disabled){opacity:.9;background:var(--fg)}
+.muted{color:var(--mut)}
+
+/* Cabecera */
+header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{font-size:20px;margin:0}
+.status{display:flex;gap:8px;align-items:center;margin-top:4px;color:var(--mut);font-size:13px}
+.dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--gone)}
+.dot.busy{background:var(--fix);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.hright{display:flex;gap:8px;align-items:center}
+.badge{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--mut);background:var(--card)}
+.badge.on{border-color:var(--cut);color:var(--cut)}
+
+/* Resumen */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;cursor:pointer;box-shadow:var(--shadow);
+  border-left:4px solid var(--c,var(--gone));text-align:left;white-space:normal}
+.card b{display:block;font-size:22px;line-height:1.1}
+.card span{font-size:12px;color:var(--mut)}
+.card.sel{outline:2px solid var(--c,var(--fg));outline-offset:-1px}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:12px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.tabs a{padding:8px 14px;text-decoration:none;color:var(--mut);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs a.on{color:var(--fg);border-bottom-color:var(--fg);font-weight:600}
+
+/* Barra */
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.toolbar .grow{flex:1}
+.toolbar input[type=search]{min-width:160px;flex:1 1 160px;max-width:260px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.toolbar select{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.toolbar .btns{display:flex;gap:6px;flex-wrap:wrap}
+.toolbar label{font-size:13px;color:var(--mut);display:flex;gap:6px;align-items:center}
+.watch{background:color-mix(in srgb,var(--fix) 10%,var(--card));border:1px solid color-mix(in srgb,var(--fix) 35%,var(--line));
+  color:var(--fg);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px}
+
+/* Tabla */
+.list{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+table{border-collapse:collapse;width:100%;table-layout:fixed}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{font-size:12px;color:var(--mut);font-weight:600;background:var(--soft)}
+col.c-off{width:96px}col.c-ver{width:150px}col.c-eng{width:210px}col.c-act{width:190px}
+.title a{font-weight:600;text-decoration:none}.title a:hover{text-decoration:underline}
+.meta{font-size:12px;color:var(--mut);margin-top:2px;overflow-wrap:anywhere}
+.note{font-size:12px;margin-top:4px;color:var(--fix)}
+.off{font-variant-numeric:tabular-nums;white-space:nowrap}
+.lv{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.lv-red{background:var(--red)}.lv-yellow{background:var(--yellow)}.lv-green{background:var(--green)}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:#fff;background:var(--c);cursor:default}
+.when{display:block;font-size:12px;color:var(--mut);margin-top:3px}
+.eng{display:grid;grid-template-columns:62px auto;gap:0 6px;font-size:12px;line-height:1.6}
+.eng span{color:var(--mut)}.eng b{font-weight:600;font-variant-numeric:tabular-nums}
+.eng i{grid-column:2;font-style:normal;color:var(--mut);margin-top:-3px}
+.acts{display:flex;flex-direction:column;gap:5px}
+.acts button{padding:5px 10px;font-size:13px;width:100%;text-align:center}
+.acts .warn{color:var(--cut);border-color:color-mix(in srgb,var(--cut) 50%,var(--line))}
+.acts .fixb{color:var(--fix);border-color:color-mix(in srgb,var(--fix) 50%,var(--line))}
+.empty{padding:28px;text-align:center;color:var(--mut)}
+.v-ok{--c:var(--ok)}.v-fixable{--c:var(--fix)}.v-other_cut{--c:var(--cut)}.v-disagree{--c:var(--dis)}
+.v-gone,.v-unsupported,.v-pending{--c:var(--gone)}.v-error{--c:var(--err)}
+
+/* Registro */
+details.log{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+details.log summary{padding:10px 14px;cursor:pointer;font-weight:600}
+#log{margin:0;padding:10px 14px;max-height:320px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;border-top:1px solid var(--line)}
+#log .WARNING{color:var(--dis)}#log .ERROR{color:var(--err)}
+.help{font-size:12px;color:var(--mut);margin:10px 2px 0}
+
+/* Aviso */
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;
+  background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:8px;font-size:13px;transition:.2s;max-width:calc(100vw - 32px);z-index:10}
+#toast.show{opacity:1;transform:translateX(-50%)}
+
+/* Ajustes */
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);padding:0;width:min(540px,calc(100vw - 32px));max-height:calc(100vh - 32px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog form{padding:18px 20px}
+dialog h2{margin:0 0 14px;font-size:17px}
+dialog fieldset{border:1px solid var(--line);border-radius:8px;margin:0 0 12px;padding:8px 12px 10px}
+dialog legend{font-weight:600;padding:0 4px;font-size:13px}
+dialog label{display:flex;gap:8px;align-items:center;margin:7px 0;flex-wrap:wrap}
+dialog input[type=text],dialog input[type=number]{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;width:90px}
+dialog .hint{font-size:12px;color:var(--mut);margin:4px 0 0}
+dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+#setmsg{color:var(--err);font-size:13px;min-height:1.2em;margin:0}
+
+/* Móvil: cada fila es una tarjeta */
+@media (max-width:820px){
+  table,tbody,tr,td{display:block;width:100%}
+  thead,colgroup{display:none}
+  tr{border-bottom:1px solid var(--line);padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:6px 12px}
+  tr:last-child{border-bottom:0}
+  td{border:0;padding:0}
+  td.title{grid-column:1/-1}
+  td.off{grid-column:2;grid-row:2;text-align:right}
+  td.ver{grid-column:1;grid-row:2}
+  td.engc{grid-column:1/-1}
+  td.actc{grid-column:1/-1}
+  .acts{flex-direction:row;flex-wrap:wrap}.acts button{width:auto;flex:1 1 auto}
+}
+</style></head><body><main>
+
+<header>
+  <div><h1>Sync Doctor</h1><div class="status"><span class="dot" id="dot"></span><span id="status">Cargando…</span></div></div>
+  <div class="hright"><span class="badge" id="autobadge"></span><button id="openset">⚙ Ajustes</button></div>
+</header>
+
+<div class="cards" id="cards"></div>
+<nav class="tabs" id="tabs"></nav>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="Buscar título…" aria-label="Buscar título">
+  <select id="order" aria-label="Orden">
+    <option value="prio">Orden: a revisar primero</option>
+    <option value="offset">Orden: mayor offset</option>
+    <option value="recent">Orden: más recientes</option>
+    <option value="title">Orden: título</option>
+  </select>
+  <label><input type="checkbox" id="controls" checked> Verdes de control</label>
+  <span class="grow"></span>
+  <span class="btns">
+    <button id="runall" class="primary">Comprobar pendientes</button>
+    <button id="stop">Detener</button>
+    <button id="scan">Leer Bazarr</button>
+    <button id="retry" title="Vuelve a comprobar los que dieron error">Reintentar errores</button>
+  </span>
+</div>
+<div class="watch" id="watch" hidden></div>
+
+<div class="list"><table>
+  <colgroup><col><col class="c-off"><col class="c-ver"><col class="c-eng"><col class="c-act"></colgroup>
+  <thead><tr><th>Título</th><th>Bazarr</th><th>Veredicto</th><th>Comprobación</th><th>Acciones</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table></div>
+<p class="help">"Comprobación": cuánto moverían ffsubsync y alass el subtítulo actual. Cerca de 0 = ya está bien. "Tramos" &gt; 1 = alass tuvo que cortarlo en partes (escenas que no coinciden).</p>
+
+<details class="log" id="logbox" open><summary>Registro</summary><pre id="log"></pre></details>
+<div id="toast" role="status"></div>
+
+<dialog id="settings"><form method="dialog" id="setform">
+  <h2>Ajustes</h2>
+  <fieldset><legend>Qué revisar</legend>
+    <label><input type="checkbox" name="k_movies"> Películas</label>
+    <label><input type="checkbox" name="k_episodes"> Series</label>
+  </fieldset>
+  <fieldset><legend>Cuándo</legend>
+    <label>Horario automático <input type="text" name="active_hours" placeholder="1-8"> <span class="muted">vacío = siempre</span></label>
+    <label>Verdes de control <input type="number" name="control_samples" min="0" max="50"></label>
+  </fieldset>
+  <fieldset><legend>Acciones automáticas después de comprobar</legend>
+    <label><input type="checkbox" name="a_other_cut"> <span><b>Otra versión</b> → descartar y buscar otro</span></label>
+    <label><input type="checkbox" name="a_disagree"> <span><b>Dudoso</b> → descartar y buscar otro</span></label>
+    <label><input type="checkbox" name="a_fixable"> <span><b>Corregible</b> → aplicar la corrección</span></label>
+    <label><input type="checkbox" name="a_gone"> <span><b>Ya no está</b> → pedir a Bazarr que busque</span></label>
+    <label>Máximo de acciones por título e idioma <input type="number" name="max_attempts" min="1" max="10"></label>
+    <p class="hint">"Descartar" = Bazarr borra el sub, lo mete en su lista negra y descarga el siguiente mejor. El sub nuevo se comprueba en cuanto Bazarr lo tiene.</p>
+  </fieldset>
+  <p id="setmsg"></p>
+  <div class="row"><button value="cancel" formnovalidate>Cancelar</button><button id="saveset" class="primary" value="default">Guardar</button></div>
+</form></dialog>
+
+<script>
+const LABELS = __VERDICTS__;
+const BAZARR = __BAZARR__;
+const SHORT = {ok:"Bien", fixable:"Corregible", other_cut:"Otra versión", disagree:"Dudoso", gone:"Ya no está",
+               error:"Error", unsupported:"No soportado", pending:"Pendiente"};
+const ORDER = ["pending","other_cut","disagree","fixable","gone","error","ok","unsupported"];
+const RANK = {disagree:0, other_cut:1, fixable:2, error:3, pending:4, gone:5, ok:6, unsupported:7};
+const TABS = {all:["Todo",null], peliculas:["Películas","movies"], series:["Series","episodes"]};
+let data = null, filter = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+const sec = v => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(Math.abs(v) >= 100 ? 1 : 2) + " s";
+function ago(t){
+  if (!t) return "";
+  const s = Date.now()/1000 - t;
+  if (s < 60) return "hace un momento";
+  if (s < 3600) return `hace ${Math.round(s/60)} min`;
+  if (s < 86400) return `hace ${Math.round(s/3600)} h`;
+  return new Date(t*1000).toLocaleDateString();
+}
+function toast(msg){
+  const el = $("toast"); el.textContent = msg; el.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 4000);
+}
+const busy = () => data && (data.state.current || data.state.queue.length || data.state.run_all);
+
+async function load(){
+  try { data = await fetch("api/results").then(r => r.json()); } catch(e) { return; }
+  const st = data.state;
+  const pending = data.items.filter(i => i.status === "pending").length;
+  let txt;
+  if (st.current) txt = `Comprobando ${st.current}`;
+  else if (st.run_all) txt = "Procesando la cola…";
+  else if (!st.in_active_hours && pending) txt = `${pending} pendientes para el horario automático (${st.active_hours} h)`;
+  else txt = pending ? `${pending} pendientes` : "Todo comprobado";
+  if (st.queue.length) txt += ` · ${st.queue.length} en cola`;
+  if (st.last_scan) txt += ` · Bazarr leído ${ago(st.last_scan)}`;
+  if (st.last_scan_error) txt += ` · Error leyendo Bazarr: ${st.last_scan_error}`;
+  $("status").textContent = txt;
+  $("dot").className = "dot" + (busy() ? " busy" : "");
+  $("runall").disabled = !!st.run_all || !pending;
+  $("stop").disabled = !busy();
+  const w = st.watching || [];
+  $("watch").hidden = !w.length;
+  $("watch").textContent = w.length ? `⏳ Esperando a que Bazarr descargue otro sub: ${w.join(", ")}` : "";
+  render();
+}
+async function post(url, msg){
+  const r = await fetch(url, {method:"POST"}).catch(() => null);
+  if (msg) toast(msg);
+  await load(); pollLog();
+  return r;
+}
+function currentTab(){
+  const kinds = data.state.kinds || ["movies","episodes"];
+  if (kinds.length < 2) return kinds[0] === "movies" ? "peliculas" : "series";
+  const t = location.hash.slice(1);
+  return TABS[t] ? t : "all";
+}
+
+function render(){
+  const showCtl = $("controls").checked;
+  const q = $("q").value.trim().toLowerCase();
+  const kinds = data.state.kinds || ["movies","episodes"];
+  const tab = currentTab();
+  const visible = data.items.filter(i => showCtl || !i.is_control);
+
+  // Pestañas
+  $("tabs").innerHTML = kinds.length < 2
+    ? `<a class="on">${TABS[tab][0]}</a>`
+    : Object.entries(TABS).map(([k,[label,kind]]) =>
+        `<a href="#${k}" class="${k===tab?"on":""}">${label} · ${visible.filter(i => !kind || i.kind === kind).length}</a>`).join("");
+  const tabKind = TABS[tab][1];
+  const inTab = visible.filter(i => !tabKind || i.kind === tabKind);
+
+  // Resumen (filtros)
+  const counts = {};
+  for (const i of inTab) { const v = i.verdict || "pending"; counts[v] = (counts[v]||0) + 1; }
+  if (filter && !counts[filter]) filter = null;
+  $("cards").innerHTML = ORDER.filter(v => counts[v]).map(v =>
+    `<button class="card v-${v} ${filter===v?"sel":""}" data-v="${v}" title="${esc(v==="pending"?"Aún sin comprobar":LABELS[v])}">
+      <b>${counts[v]}</b><span>${SHORT[v]}</span></button>`).join("");
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => { filter = filter === c.dataset.v ? null : c.dataset.v; render(); });
+
+  // Lista
+  const order = $("order").value;
+  const list = inTab
+    .filter(i => !filter || (i.verdict || "pending") === filter)
+    .filter(i => !q || i.title.toLowerCase().includes(q))
+    .sort((a,b) => {
+      if (order === "offset") return Math.abs(b.bazarr_offset) - Math.abs(a.bazarr_offset);
+      if (order === "recent") return (b.checked_at||0) - (a.checked_at||0);
+      if (order === "title") return a.title.localeCompare(b.title);
+      return (RANK[a.verdict||"pending"] - RANK[b.verdict||"pending"]) || Math.abs(b.bazarr_offset) - Math.abs(a.bazarr_offset);
+    });
+  $("rows").innerHTML = list.length ? list.map(row).join("")
+    : `<tr><td colspan="5" class="empty">${q || filter ? "Nada coincide con el filtro." : "Sin subtítulos que revisar."}</td></tr>`;
+  document.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
+    b.disabled = true; b.textContent = "En cola…";
+    post("api/run?key=" + encodeURIComponent(b.dataset.k), "Añadido a la cola: se comprueba enseguida");
+  });
+  document.querySelectorAll("button[data-act]").forEach(b => b.onclick = () => act(b));
+}
+
+function row(i){
+  const r = i.result || {}; const v = i.verdict || "pending";
+  const href = i.kind === "movies" ? `${BAZARR}/movies/${i.media_id}` : `${BAZARR}/series/${i.series_id}`;
+  const meta = [i.language, i.provider, i.is_control ? "control" : null].filter(Boolean).join(" · ");
+  const extra = [i.note, r.error].filter(Boolean).map(esc).join(" · ");
+  return `<tr>
+    <td class="title"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(i.title)}</a>
+      <div class="meta">${esc(meta)}${extra ? " · " + extra : ""}</div>
+      ${i.action_note ? `<div class="note">${esc(i.action_note)}</div>` : ""}</td>
+    <td class="off"><span class="lv lv-${esc(i.level)}" title="Color en Bazarr"></span>${sec(i.bazarr_offset)}</td>
+    <td class="ver"><span class="pill v-${esc(v)}" title="${esc(v==="pending"?"Aún sin comprobar":LABELS[v])}">${SHORT[v] || v}</span>
+      <span class="when">${ago(i.checked_at)}</span></td>
+    <td class="engc">${engines(r)}</td>
+    <td class="actc"><div class="acts">${actionButtons(i)}${checkButton(i)}</div></td>
+  </tr>`;
+}
+function engines(r){
+  if (!r.ffsubsync && !r.alass) return `<span class="muted">–</span>`;
+  const one = (name, e) => {
+    if (!e) return `<span>${name}</span><b class="muted">falló</b>`;
+    let s = `<span>${name}</span><b>${sec(e.median)}</b>`;
+    if (e.segments > 1) s += `<i>${e.segments} tramos · ${Math.round(e.split_fraction*100)}% fuera</i>`;
+    return s;
+  };
+  return `<div class="eng">${one("ffsubsync", r.ffsubsync)}${one("alass", r.alass)}</div>`;
+}
+function checkButton(i){
+  const st = data.state;
+  if (st.current_key === i.key) return `<button disabled>Comprobando…</button>`;
+  if (st.queue.includes(i.key)) return `<button disabled>En cola…</button>`;
+  if (i.status === "acted") return "";
+  return `<button data-k="${esc(i.key)}">${i.status === "done" ? "Comprobar de nuevo" : "Comprobar ahora"}</button>`;
+}
+function actionButtons(i){
+  if (i.status !== "done" || data.state.current_key === i.key) return "";
+  const r = i.result || {}, v = i.verdict, k = esc(i.key), out = [];
+  if (v === "fixable" && r.ffsubsync && r.alass)
+    out.push(`<button class="fixb" data-act="fix" data-key="${k}" title="Bazarr desplaza el sub y se vuelve a comprobar">Aplicar ${sec((r.ffsubsync.median + r.alass.median) / 2)}</button>`);
+  if (["other_cut","disagree","fixable","ok","error"].includes(v) && i.sub_path)
+    out.push(`<button class="warn" data-act="replace" data-key="${k}" data-title="${esc(i.title)}" title="Bazarr lo borra, lo mete en su lista negra y descarga otro">Descartar y buscar</button>`);
+  if (v === "gone")
+    out.push(`<button data-act="search" data-key="${k}" title="Bazarr busca y descarga un sub de este idioma">Buscar sub</button>`);
+  return out.join("");
+}
+async function act(b){
+  const what = b.dataset.act;
+  if (what === "replace" && !confirm(`"${b.dataset.title}": Bazarr borrará este subtítulo, lo meterá en su lista negra y buscará otro. ¿Seguro?`)) return;
+  b.disabled = true; b.textContent = "Enviando…";
+  const res = await fetch(`api/action?do=${what}&key=${encodeURIComponent(b.dataset.key)}`, {method:"POST"})
+    .then(r => r.json()).catch(() => ({ok:false, message:"sin respuesta"}));
+  toast(res.ok ? "Enviado a Bazarr" : "No se pudo: " + res.message);
+  await load(); pollLog();
+}
+
+// Registro
+let logAfter = 0, logBusy = false;
+async function pollLog(){
+  if (!$("logbox").open || logBusy) return;
+  logBusy = true;
+  let lines;
+  try { lines = (await fetch("api/log?after=" + logAfter).then(r => r.json())).lines; }
+  catch(e) { return; } finally { logBusy = false; }
+  lines = lines.filter(l => l.n > logAfter);
+  if (!lines.length) return;
+  const pre = $("log");
+  const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+  pre.insertAdjacentHTML("beforeend", lines.map(l => `<span class="${esc(l.level)}">${esc(l.text)}</span>\n`).join(""));
+  logAfter = lines[lines.length - 1].n;
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+// Ajustes
+const AUTO = {other_cut:"replace", disagree:"replace", fixable:"fix", gone:"search"};
+async function openSettings(){
+  const s = await fetch("api/settings").then(r => r.json());
+  const f = $("setform");
+  f.k_movies.checked = s.kinds.includes("movies"); f.k_episodes.checked = s.kinds.includes("episodes");
+  f.active_hours.value = s.active_hours || ""; f.control_samples.value = s.control_samples; f.max_attempts.value = s.max_attempts;
+  for (const v of Object.keys(AUTO)) f["a_" + v].checked = !!s.auto_actions[v];
+  $("setmsg").textContent = "";
+  $("settings").showModal();
+}
+async function saveSettings(ev){
+  ev.preventDefault();
+  const f = $("setform");
+  const body = {
+    kinds: [f.k_movies.checked && "movies", f.k_episodes.checked && "episodes"].filter(Boolean),
+    active_hours: f.active_hours.value.trim(), control_samples: +f.control_samples.value, max_attempts: +f.max_attempts.value,
+    auto_actions: Object.fromEntries(Object.entries(AUTO).filter(([v]) => f["a_" + v].checked)),
+  };
+  const res = await fetch("api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})
+    .then(r => r.json()).catch(() => ({ok:false, message:"sin respuesta"}));
+  if (!res.ok) { $("setmsg").textContent = res.message; return; }
+  $("settings").close(); toast("Ajustes guardados");
+  refreshAutoBadge(); await load(); pollLog();
+}
+async function refreshAutoBadge(){
+  const s = await fetch("api/settings").then(r => r.json()).catch(() => null);
+  if (!s) return;
+  const n = Object.keys(s.auto_actions).length;
+  $("autobadge").textContent = n ? `Automático: ${n} ${n === 1 ? "acción" : "acciones"}` : "Automático: no";
+  $("autobadge").className = "badge" + (n ? " on" : "");
+}
+
+$("controls").onchange = render;
+$("q").oninput = render;
+$("order").onchange = render;
+window.addEventListener("hashchange", () => { filter = null; render(); });
+$("runall").onclick = () => post("api/run", "Comprobando todos los pendientes");
+$("stop").onclick = () => post("api/stop", "Detenido");
+$("retry").onclick = () => post("api/retry-errors", "Errores en cola");
+$("scan").onclick = async () => {
+  $("scan").disabled = true; $("scan").textContent = "Leyendo…";
+  const res = await fetch("api/scan", {method:"POST"}).then(r => r.json()).catch(() => ({message:"sin respuesta"}));
+  $("scan").disabled = false; $("scan").textContent = "Leer Bazarr";
+  toast(res.message || "Bazarr leído");
+  await load(); pollLog();
+};
+$("logbox").ontoggle = pollLog;
+$("openset").onclick = openSettings;
+$("saveset").onclick = saveSettings;
+refreshAutoBadge();
+(async function loop(){ await load(); await pollLog(); setTimeout(loop, busy() || (data && data.state.watching.length) ? 3000 : 15000); })();
+</script></body></html>

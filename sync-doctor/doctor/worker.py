@@ -40,12 +40,24 @@ class Worker:
         self.run_all = False
         self.next_scan = 0
         self.watch = {}  # media_key → acción en curso esperando sub nuevo de Bazarr
-        self.state = {"current": None, "current_key": None, "last_scan": None, "last_scan_error": None}
+        self.scan_lock = threading.Lock()
+        self.state = {"current": None, "current_key": None, "last_scan": None, "last_scan_error": None,
+                      "last_scan_summary": None}
 
     # ------------------------------------------------------- peticiones de la web
     def request_scan(self, delay=0):
         self.next_scan = min(self.next_scan, time.time() + delay)
         self.wake.set()
+
+    def scan_now(self):
+        """"Leer Bazarr ahora": se lee en el acto, aunque haya una comprobación en marcha."""
+        try:
+            self.scan(manual=True)
+        except Exception as e:  # noqa: BLE001
+            log.warning("No he podido leer Bazarr: %s", e)
+            self.state["last_scan_error"] = str(e)
+            self.state["last_scan_summary"] = f"Error leyendo Bazarr: {e}"
+        return self.state["last_scan_summary"]
 
     def request_one(self, key):
         if not self.store.get(key):
@@ -84,7 +96,11 @@ class Worker:
                 "watching": [w["title"] for w in self.watch.values()]}
 
     # ------------------------------------------------------------------ escaneo
-    def scan(self):
+    def scan(self, manual=False):
+        with self.scan_lock:
+            self._scan(manual)
+
+    def _scan(self, manual):
         live = set()
         added = 0
         # Solo los tipos activados en MEDIA_TYPES; los demás salen del informe.
@@ -127,8 +143,13 @@ class Worker:
         removed = self.store.mark_obsolete(live)
         self.state["last_scan"] = time.time()
         self.state["last_scan_error"] = None
-        if added or removed or not self.watch:
-            log.info("Bazarr leído: %d nuevas, %d retiradas, %d en el informe", added, removed, len(live))
+        summary = f"Bazarr leído: {added} nuevas, {removed} retiradas, {len(live)} en el informe"
+        if self.watch:
+            summary += f"; esperando sub nuevo para {len(self.watch)}"
+        self.state["last_scan_summary"] = summary
+        # Los escaneos de vigilancia (cada minuto) solo se anotan si hay novedades.
+        if manual or added or removed or not self.watch:
+            log.info("%s%s", summary, " (a petición)" if manual else "")
 
     def _follow_up_watches(self):
         """Tras descartar o buscar: si Bazarr ya tiene sub nuevo, se comprueba al momento."""
@@ -141,11 +162,11 @@ class Worker:
                 log.info("Bazarr ya tiene un sub nuevo para %s: se comprueba ahora", new["title"])
                 self.store.set_action_note(w["key"], "Bazarr descargó otro sub: ver la fila nueva.")
                 self.request_one(new["key"])
-                del self.watch[mkey]
+                self.watch.pop(mkey, None)
             elif now > w["deadline"]:
                 self.store.set_action_note(w["key"], w["note"] + " Bazarr no ha encontrado otro sub (revísalo a mano).")
                 log.info("Sin sub nuevo para %s tras %d min", w["title"], WATCH_MINUTES)
-                del self.watch[mkey]
+                self.watch.pop(mkey, None)
 
     # --------------------------------------------------------------- acciones
     def available_actions(self, item):
