@@ -2,6 +2,7 @@
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sync Doctor</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>
 :root{
   --bg:#f4f5f7;--card:#fff;--fg:#1b1d21;--mut:#6b7280;--line:#e4e6ea;--soft:#f0f1f4;
@@ -27,7 +28,8 @@ button.primary:hover:not(:disabled){opacity:.9;background:var(--fg)}
 
 /* Cabecera */
 header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-h1{font-size:20px;margin:0}
+h1{font-size:20px;margin:0;display:flex;align-items:center;gap:10px}
+h1 img{width:28px;height:28px}
 .status{display:flex;gap:8px;align-items:center;margin-top:4px;color:var(--mut);font-size:13px}
 .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--gone)}
 .dot.busy{background:var(--fix);animation:pulse 1.2s infinite}
@@ -55,6 +57,7 @@ h1{font-size:20px;margin:0}
 .toolbar select{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
 .toolbar .btns{display:flex;gap:6px;flex-wrap:wrap}
 .toolbar label{font-size:13px;color:var(--mut);display:flex;gap:6px;align-items:center}
+.disk{font-size:12px;color:var(--mut);margin:-4px 0 10px}
 .watch{background:color-mix(in srgb,var(--fix) 10%,var(--card));border:1px solid color-mix(in srgb,var(--fix) 35%,var(--line));
   color:var(--fg);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px}
 
@@ -70,6 +73,7 @@ col.c-off{width:96px}col.c-ver{width:150px}col.c-eng{width:210px}col.c-act{width
 .note{font-size:12px;margin-top:4px;color:var(--fix)}
 .off{font-variant-numeric:tabular-nums;white-space:nowrap}
 .lv{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.lv-unknown{background:transparent;border:1.5px solid var(--gone)}
 .lv-red{background:var(--red)}.lv-yellow{background:var(--yellow)}.lv-green{background:var(--green)}
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;color:#fff;background:var(--c);cursor:default}
 .when{display:block;font-size:12px;color:var(--mut);margin-top:3px}
@@ -126,7 +130,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
 </style></head><body><main>
 
 <header>
-  <div><h1>Sync Doctor</h1><div class="status"><span class="dot" id="dot"></span><span id="status">Cargando…</span></div></div>
+  <div><h1><img src="favicon.svg" alt="">Sync Doctor</h1><div class="status"><span class="dot" id="dot"></span><span id="status">Cargando…</span></div></div>
   <div class="hright"><span class="badge" id="autobadge"></span><button id="openset">⚙ Ajustes</button></div>
 </header>
 
@@ -142,6 +146,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
     <option value="title">Orden: título</option>
   </select>
   <label><input type="checkbox" id="controls" checked> Verdes de control</label>
+  <label id="showdiskl" hidden><input type="checkbox" id="showdisk"> Del disco que están bien</label>
   <span class="grow"></span>
   <span class="btns">
     <button id="runall" class="primary">Comprobar pendientes</button>
@@ -151,6 +156,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
   </span>
 </div>
 <div class="watch" id="watch" hidden></div>
+<p class="disk" id="disk" hidden></p>
 
 <div class="list"><table>
   <colgroup><col><col class="c-off"><col class="c-ver"><col class="c-eng"><col class="c-act"></colgroup>
@@ -167,6 +173,8 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
   <fieldset><legend>Qué revisar</legend>
     <label><input type="checkbox" name="k_movies"> Películas</label>
     <label><input type="checkbox" name="k_episodes"> Series</label>
+    <label><input type="checkbox" name="scan_disk"> <span>También los subtítulos del disco <b>sin sincronización en el historial</b></span></label>
+    <p class="hint">Se comprueban todos una vez (y otra si el archivo cambia), pero en la lista solo aparecen los que tienen algún problema.</p>
   </fieldset>
   <fieldset><legend>Cuándo</legend>
     <label>Horario automático <input type="text" name="active_hours" placeholder="1-8"> <span class="muted">vacío = siempre</span></label>
@@ -238,6 +246,7 @@ async function post(url, msg){
   await load(); pollLog();
   return r;
 }
+function tabKindOf(){ return data ? TABS[currentTab()][1] : null; }
 function currentTab(){
   const kinds = data.state.kinds || ["movies","episodes"];
   if (kinds.length < 2) return kinds[0] === "movies" ? "peliculas" : "series";
@@ -250,7 +259,19 @@ function render(){
   const q = $("q").value.trim().toLowerCase();
   const kinds = data.state.kinds || ["movies","episodes"];
   const tab = currentTab();
-  const visible = data.items.filter(i => showCtl || !i.is_control);
+  const showDisk = $("showdisk").checked;
+  const quietDisk = i => i.source === "disk" && (!i.verdict || i.verdict === "ok" || i.verdict === "unsupported");
+  const visible = data.items.filter(i => (showCtl || !i.is_control) && (showDisk || !quietDisk(i)));
+  // Resumen del repaso del disco
+  const disk = data.items.filter(i => i.source === "disk" && (!tabKindOf() || i.kind === tabKindOf()));
+  $("showdiskl").hidden = !data.state.scan_disk;
+  $("disk").hidden = !data.state.scan_disk || !disk.length;
+  if (disk.length) {
+    const done = disk.filter(i => i.status !== "pending").length, okN = disk.filter(i => i.verdict === "ok").length;
+    const bad = disk.filter(i => ["fixable","other_cut","disagree","error"].includes(i.verdict)).length;
+    $("disk").textContent = `Subtítulos del disco sin sincronización en el historial: ${disk.length} · comprobados ${done} · bien ${okN} · con problema ${bad}` +
+      (done < disk.length ? ` · faltan ${disk.length - done}` : "");
+  }
 
   // Pestañas
   $("tabs").innerHTML = kinds.length < 2
@@ -292,13 +313,15 @@ function render(){
 function row(i){
   const r = i.result || {}; const v = i.verdict || "pending";
   const href = i.kind === "movies" ? `${BAZARR}/movies/${i.media_id}` : `${BAZARR}/series/${i.series_id}`;
-  const meta = [i.language, i.provider, i.is_control ? "control" : null].filter(Boolean).join(" · ");
+  const meta = [i.language, i.provider, i.is_control ? "control" : null, i.source === "disk" ? "del disco" : null].filter(Boolean).join(" · ");
   const extra = [i.note, r.error].filter(Boolean).map(esc).join(" · ");
   return `<tr>
     <td class="title"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(i.title)}</a>
       <div class="meta">${esc(meta)}${extra ? " · " + extra : ""}</div>
       ${i.action_note ? `<div class="note">${esc(i.action_note)}</div>` : ""}</td>
-    <td class="off"><span class="lv lv-${esc(i.level)}" title="Color en Bazarr"></span>${sec(i.bazarr_offset)}</td>
+    <td class="off">${i.source === "disk"
+      ? `<span class="lv lv-unknown" title="Sin sincronización en el historial de Bazarr"></span><span class="muted">sin datos</span>`
+      : `<span class="lv lv-${esc(i.level)}" title="Color en Bazarr"></span>${sec(i.bazarr_offset)}`}</td>
     <td class="ver"><span class="pill v-${esc(v)}" title="${esc(v==="pending"?"Aún sin comprobar":LABELS[v])}">${SHORT[v] || v}</span>
       <span class="when">${ago(i.checked_at)}</span></td>
     <td class="engc">${engines(r)}</td>
@@ -365,7 +388,7 @@ const AUTO = {other_cut:"replace", disagree:"replace", fixable:"fix", gone:"sear
 async function openSettings(){
   const s = await fetch("api/settings").then(r => r.json());
   const f = $("setform");
-  f.k_movies.checked = s.kinds.includes("movies"); f.k_episodes.checked = s.kinds.includes("episodes");
+  f.k_movies.checked = s.kinds.includes("movies"); f.k_episodes.checked = s.kinds.includes("episodes"); f.scan_disk.checked = !!s.scan_disk;
   f.active_hours.value = s.active_hours || ""; f.control_samples.value = s.control_samples; f.max_attempts.value = s.max_attempts;
   for (const v of Object.keys(AUTO)) f["a_" + v].checked = !!s.auto_actions[v];
   $("setmsg").textContent = "";
@@ -375,7 +398,7 @@ async function saveSettings(ev){
   ev.preventDefault();
   const f = $("setform");
   const body = {
-    kinds: [f.k_movies.checked && "movies", f.k_episodes.checked && "episodes"].filter(Boolean),
+    kinds: [f.k_movies.checked && "movies", f.k_episodes.checked && "episodes"].filter(Boolean), scan_disk: f.scan_disk.checked,
     active_hours: f.active_hours.value.trim(), control_samples: +f.control_samples.value, max_attempts: +f.max_attempts.value,
     auto_actions: Object.fromEntries(Object.entries(AUTO).filter(([v]) => f["a_" + v].checked)),
   };
@@ -394,6 +417,7 @@ async function refreshAutoBadge(){
 }
 
 $("controls").onchange = render;
+$("showdisk").onchange = render;
 $("q").oninput = render;
 $("order").onchange = render;
 window.addEventListener("hashchange", () => { filter = null; render(); });

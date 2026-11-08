@@ -22,6 +22,12 @@ Para cada subtítulo amarillo o rojo (offset de Bazarr > 1 s), y para unos cuant
 
 Cada comprobación tarda unos minutos por película (lo que más tarda es leer el audio). Trabaja de una en una.
 
+### Subtítulos sin sincronización en el historial
+
+Por defecto solo se revisa lo que aparece en el historial de Bazarr. Con **Ajustes → "También los subtítulos del disco sin sincronización en el historial"** (o `SCAN_DISK=1`) revisa además todos los `.srt` **externos** que Bazarr tiene registrados para cada película o episodio: los descargados antes de que empezara el historial, los subidos a mano, los renombrados… Los subtítulos internos del vídeo no se revisan.
+
+Se comprueban todos una vez (y otra si el archivo cambia), después de los rojos y amarillos. En la lista **solo aparecen los que tienen algún problema**; los que están bien se ven marcando "Del disco que están bien".
+
 ## Acciones sobre Bazarr
 
 | Botón | Qué hace Bazarr |
@@ -64,6 +70,7 @@ Las marcadas con ⚙ también se cambian desde Ajustes en la web (lo guardado al
 | `BAZARR_API_KEY` | — | Clave de la API de Bazarr |
 | `MEDIA_TYPES` ⚙ | `movies,series` | Qué revisar: `movies` (películas), `series` o las dos |
 | `ACTIVE_HOURS` ⚙ | vacío (siempre) | Horas en las que trabaja solo, p. ej. `1-8` |
+| `SCAN_DISK` ⚙ | vacío (no) | `1` = revisar también los `.srt` externos sin sincronización en el historial |
 | `CONTROL_SAMPLES` ⚙ | `5` | Subs verdes que también comprueba, para calibrar |
 | `AUTO_ACTIONS` ⚙ | vacío (ninguna) | Veredictos con acción automática: `other_cut,disagree,fixable,gone` |
 | `MAX_ATTEMPTS` ⚙ | `3` | Máximo de acciones automáticas por título e idioma |

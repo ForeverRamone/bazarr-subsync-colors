@@ -11,6 +11,7 @@ from .verify import VERDICTS
 log = logging.getLogger("doctor.web")
 
 PAGE = (Path(__file__).with_name("page.html")).read_text(encoding="utf-8")
+ICON = (Path(__file__).with_name("favicon.svg")).read_text(encoding="utf-8")
 
 
 def make_handler(cfg, store, worker):
@@ -47,6 +48,8 @@ def make_handler(cfg, store, worker):
                            "application/json; charset=utf-8")
             elif path == "/api/settings":
                 self._send(200, json.dumps(cfg.editable(), ensure_ascii=False), "application/json; charset=utf-8")
+            elif path in ("/favicon.svg", "/favicon.ico"):
+                self._send(200, ICON, "image/svg+xml")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             else:

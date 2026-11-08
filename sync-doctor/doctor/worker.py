@@ -41,6 +41,8 @@ class Worker:
         self.next_scan = 0
         self.watch = {}  # media_key → acción en curso esperando sub nuevo de Bazarr
         self.scan_lock = threading.Lock()
+        self.disk_keys = {}  # tipo → claves de los subs del disco (de la última lectura completa)
+        self.last_disk_scan = 0
         self.state = {"current": None, "current_key": None, "last_scan": None, "last_scan_error": None,
                       "last_scan_summary": None}
 
@@ -92,20 +94,31 @@ class Worker:
             queue = list(self.manual)
         return {**self.state, "queue": queue, "run_all": self.run_all,
                 "in_active_hours": self.cfg.in_active_hours(hour),
-                "kinds": self.cfg.kinds, "active_hours": self.cfg.active_hours,
+                "kinds": self.cfg.kinds, "active_hours": self.cfg.active_hours, "scan_disk": self.cfg.scan_disk,
                 "watching": [w["title"] for w in self.watch.values()]}
 
     # ------------------------------------------------------------------ escaneo
     def scan(self, manual=False):
         with self.scan_lock:
-            self._scan(manual)
+            # El repaso del disco es más pesado: no en cada lectura de vigilancia (cada minuto).
+            disk = manual or time.time() - self.last_disk_scan >= self.cfg.scan_interval_minutes * 60 - 5
+            self._scan(manual, disk=disk)
+            if disk:
+                self.last_disk_scan = time.time()
 
-    def _scan(self, manual):
+    def _scan(self, manual, disk=True):
         live = set()
         added = 0
         # Solo los tipos activados en MEDIA_TYPES; los demás salen del informe.
         for kind in self.cfg.kinds:
-            syncs = latest_syncs(self.bazarr.history(kind), kind)
+            hist = self.bazarr.history(kind)
+            syncs = latest_syncs(hist, kind)
+            if self.cfg.scan_disk:
+                if disk:
+                    keys, n = self._scan_disk(kind, hist, {s["path"] for s in syncs})
+                    self.disk_keys[kind] = keys
+                    added += n
+                live |= self.disk_keys.get(kind, set())
             greens = []
             for s in syncs:
                 row = s["row"]
@@ -144,12 +157,57 @@ class Worker:
         self.state["last_scan"] = time.time()
         self.state["last_scan_error"] = None
         summary = f"Bazarr leído: {added} nuevas, {removed} retiradas, {len(live)} en el informe"
+        if self.cfg.scan_disk:
+            summary += f" ({sum(len(k) for k in self.disk_keys.values())} del disco sin sincronización en el historial)"
         if self.watch:
             summary += f"; esperando sub nuevo para {len(self.watch)}"
         self.state["last_scan_summary"] = summary
         # Los escaneos de vigilancia (cada minuto) solo se anotan si hay novedades.
         if manual or added or removed or not self.watch:
             log.info("%s%s", summary, " (a petición)" if manual else "")
+
+    def _scan_disk(self, kind, hist, covered):
+        """Subtítulos externos que Bazarr tiene en disco pero sin sincronización vigente
+        en el historial. Se comprueban una vez (y otra si el archivo cambia)."""
+        # Proveedor e id de la última descarga de cada archivo, si consta (para la lista negra).
+        dl = {}
+        for r in hist:
+            p = r.get("subtitles_path")
+            if p and p not in dl and r.get("action") in (1, 2, 3, 4):
+                dl[p] = (r.get("provider"), r.get("subs_id"))
+
+        if kind == "movies":
+            medias = [(m.get("radarrId"), None, m.get("title"), m) for m in self.bazarr.all_movies()]
+        else:
+            series = {s.get("sonarrSeriesId"): s.get("title") for s in self.bazarr.all_series()}
+            medias = [(e.get("sonarrEpisodeId"), e.get("sonarrSeriesId"),
+                       f"{series.get(e.get('sonarrSeriesId'), '?')} · {e.get('season')}x{int(e.get('episode') or 0):02d} "
+                       f"{e.get('title') or ''}".strip(), e)
+                      for e in self.bazarr.episodes_of(series)]
+
+        keys, added = set(), 0
+        for media_id, series_id, title, m in medias:
+            for s in m.get("subtitles") or []:
+                path = s.get("path")
+                if not path or path in covered or not path.lower().endswith(".srt"):
+                    continue
+                try:
+                    mtime = str(int(os.stat(self.cfg.local_path(path)).st_mtime))
+                except OSError:
+                    continue
+                provider, subs_id = dl.get(path, (None, None))
+                item = {
+                    "key": f"disk|{path}",
+                    "kind": kind, "media_id": media_id, "series_id": series_id, "title": title,
+                    "language": (s.get("code2") or "") + (":hi" if s.get("hi") else "") + (":forced" if s.get("forced") else ""),
+                    "history_sub": path, "sync_ts": mtime,
+                    "bazarr_offset": None, "bazarr_fps": None, "level": "unknown",
+                    "is_control": 0, "status": "pending", "provider": provider, "subs_id": subs_id,
+                    "source": "disk",
+                }
+                keys.add(item["key"])
+                added += self.store.upsert_disk(item)
+        return keys, added
 
     def _follow_up_watches(self):
         """Tras descartar o buscar: si Bazarr ya tiene sub nuevo, se comprueba al momento."""
@@ -273,7 +331,10 @@ class Worker:
         self.state["current"] = item["title"]
         self.state["current_key"] = item["key"]
         CANCEL.clear()
-        log.info("Comprobando %s (%s, offset de Bazarr %+.2f s)", item["title"], item["level"], item["bazarr_offset"])
+        if item.get("source") == "disk":
+            log.info("Comprobando %s (sub del disco sin sincronización en el historial)", item["title"])
+        else:
+            log.info("Comprobando %s (%s, offset de Bazarr %+.2f s)", item["title"], item["level"], item["bazarr_offset"])
         try:
             video, sub, note = self.resolve_paths(item)
             if not video:
@@ -288,6 +349,12 @@ class Worker:
                 return
             result = verify(self.cfg, video, sub)
             self.store.save_result(item["key"], result["verdict"], video, sub, result, note)
+            if item.get("source") == "disk":
+                # Fecha del archivo tal como se comprobó (p. ej. tras corregirlo), para no repetir.
+                try:
+                    self.store.set_sync_ts(item["key"], str(int(os.stat(sub).st_mtime)))
+                except OSError:
+                    pass
             log.info("Resultado %s: %s", item["title"], VERDICTS.get(result["verdict"], result["verdict"]))
             if result["verdict"] == "ok":
                 self.store.reset_attempts(media_key(item))  # resuelto: el contador vuelve a cero

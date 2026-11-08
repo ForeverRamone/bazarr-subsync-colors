@@ -93,8 +93,12 @@ class Config:
     # Máximo de acciones por título e idioma (evita vaciar proveedores en bucle).
     max_attempts: int = field(default_factory=lambda: _int("MAX_ATTEMPTS", 3))
 
+    # Revisar también los subtítulos del disco que no tienen sincronización en el
+    # historial de Bazarr (descargados antes, subidos a mano, renombrados...).
+    scan_disk: bool = field(default_factory=lambda: os.environ.get("SCAN_DISK", "").lower() in ("1", "true", "yes", "si", "sí"))
+
     # Ajustes que se pueden cambiar desde la web (se guardan en la base de datos).
-    EDITABLE = ("kinds", "active_hours", "auto_actions", "max_attempts", "control_samples")
+    EDITABLE = ("kinds", "active_hours", "auto_actions", "max_attempts", "control_samples", "scan_disk")
 
     def editable(self):
         return {k: getattr(self, k) for k in self.EDITABLE}
@@ -121,6 +125,8 @@ class Config:
             clean["max_attempts"] = max(1, min(10, int(values["max_attempts"])))
         if "control_samples" in values:
             clean["control_samples"] = max(0, min(50, int(values["control_samples"])))
+        if "scan_disk" in values:
+            clean["scan_disk"] = bool(values["scan_disk"])
         for k, v in clean.items():
             setattr(self, k, v)
         return clean

@@ -46,9 +46,11 @@ NEW_COLUMNS = {
     "action": "TEXT",          # fix | replace | search
     "action_at": "REAL",
     "action_note": "TEXT",
+    "source": "TEXT DEFAULT 'history'",  # history | disk (sub sin sincronización en el historial)
 }
 
-LEVEL_ORDER = {"red": 0, "yellow": 1, "green": 2}
+# Orden de la cola: rojos, amarillos, los del disco (sin datos) y por último los verdes.
+LEVEL_ORDER = {"red": 0, "yellow": 1, "unknown": 2, "green": 3}
 
 
 def media_key(item):
@@ -77,16 +79,34 @@ class Store:
             cur = self.db.execute(
                 """INSERT OR IGNORE INTO items
                    (key, kind, media_id, series_id, title, language, history_sub, sync_ts,
-                    bazarr_offset, bazarr_fps, level, is_control, status, first_seen, provider, subs_id)
+                    bazarr_offset, bazarr_fps, level, is_control, status, first_seen, provider, subs_id, source)
                    VALUES (:key, :kind, :media_id, :series_id, :title, :language, :history_sub, :sync_ts,
                            :bazarr_offset, :bazarr_fps, :level, :is_control, :status, :first_seen,
-                           :provider, :subs_id)""",
-                {**item, "first_seen": time.time()},
+                           :provider, :subs_id, :source)""",
+                {"source": "history", **item, "first_seen": time.time()},
             )
             if cur.rowcount == 0 and item.get("provider"):
                 self.db.execute("UPDATE items SET provider = ?, subs_id = ? WHERE key = ? AND provider IS NULL",
                                 (item["provider"], item["subs_id"], item["key"]))
             return cur.rowcount > 0
+
+    def upsert_disk(self, item):
+        """Sub del disco: alta si es nuevo; si el archivo cambió (fecha de modificación
+        distinta de la última comprobada), vuelve a la cola. Devuelve 1 si hay trabajo nuevo."""
+        if self.upsert_seen(item):
+            return 1
+        with self.lock, self.db:
+            row = self.db.execute("SELECT sync_ts, status FROM items WHERE key = ?", (item["key"],)).fetchone()
+            if row and row["sync_ts"] != item["sync_ts"] and row["status"] != "pending":
+                self.db.execute("UPDATE items SET sync_ts = ?, status = 'pending', provider = COALESCE(?, provider), "
+                                "subs_id = COALESCE(?, subs_id) WHERE key = ?",
+                                (item["sync_ts"], item["provider"], item["subs_id"], item["key"]))
+                return 1
+        return 0
+
+    def set_sync_ts(self, key, value):
+        with self.lock, self.db:
+            self.db.execute("UPDATE items SET sync_ts = ? WHERE key = ?", (value, key))
 
     def mark_obsolete(self, live_keys, keep_acted_seconds=24 * 3600):
         """Quita las que ya no son la última sincronización vigente.

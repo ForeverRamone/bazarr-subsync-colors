@@ -77,6 +77,19 @@ class Bazarr:
         """kind: 'movies' o 'episodes'. Devuelve todo el historial, del más nuevo al más viejo."""
         return self._get(f"{kind}/history", {"start": 0, "length": -1}).get("data", [])
 
+    def all_movies(self):
+        return self._get("movies", {"start": 0, "length": -1}).get("data", [])
+
+    def all_series(self):
+        return self._get("series", {"start": 0, "length": -1}).get("data", [])
+
+    def episodes_of(self, series_ids):
+        out = []
+        ids = list(series_ids)
+        for i in range(0, len(ids), 50):
+            out += self._get("episodes", [("seriesid[]", s) for s in ids[i:i + 50]]).get("data", [])
+        return out
+
     def movie(self, radarr_id):
         data = self._get("movies", [("radarrid[]", radarr_id)]).get("data", [])
         return data[0] if data else None
